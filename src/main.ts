@@ -20,6 +20,7 @@ import { RedisRateLimitService } from './modules/auth/infrastructure/cache/Redis
 import { NodemailerEmailService } from './modules/auth/infrastructure/email/NodemailerEmailService'
 import { BcryptPasswordHasher } from './modules/auth/infrastructure/security/BcryptPasswordHasher'
 import { JwtTokenService } from './modules/auth/infrastructure/security/JwtTokenService'
+import { AuditService } from './modules/auth/application/services/AuditService'
 
 async function bootstrap(): Promise<void> {
   const config = loadConfig()
@@ -39,7 +40,8 @@ async function bootstrap(): Promise<void> {
   // (Wired up here; full implementations added in later tasks)
   const _userRepository = new PostgresUserRepository(dbPool)
   const _tokenRepository = new PostgresTokenRepository(dbPool)
-  const _auditService = new PostgresAuditRepository(dbPool)
+  const _auditRepository = new PostgresAuditRepository(dbPool)
+  const _auditService = new AuditService(_auditRepository)
   const _rateLimitService = new RedisRateLimitService()
   const _emailService = new NodemailerEmailService()
   const _passwordHasher = new BcryptPasswordHasher()
