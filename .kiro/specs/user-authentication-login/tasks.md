@@ -71,12 +71,12 @@ Este plan convierte el diseño técnico en pasos de codificación incrementales 
     - Usar consultas parametrizadas para prevenir inyección SQL
     - _Requerimientos: 1.4, 2.4, 3.3, 12.3_
 
-- [ ] 4. Implementar `AuditService`
-  - [ ] 4.1 Implementar el método `AuditService.log`
+- [x] 4. Implementar `AuditService`
+  - [x] 4.1 Implementar el método `AuditService.log`
     - Persistir eventos en `audit_logs` con todos los campos requeridos: `user_id`, `event_type`, `occurred_at` (UTC), `ip_address`, `device_info`
     - _Requerimientos: 4.7, 12.1, 12.2_
 
-  - [ ]* 4.2 Escribir prueba de propiedad para `AuditService`
+  - [x]* 4.2 Escribir prueba de propiedad para `AuditService`
     - **Propiedad 8: El log de auditoría contiene todos los campos requeridos para cada evento**
     - Generar eventos arbitrarios de cada `AuditEventType` y verificar que el registro persistido contiene todos los campos obligatorios
     - **Valida: Requerimientos 4.7, 12.1, 12.2**

@@ -1,16 +1,16 @@
-import { IAuditService } from '../../application/ports/IAuditService'
+import { IAuditRepository } from '../../application/ports/IAuditRepository'
 import { AuditEvent } from '../../application/dtos'
 import { DbPool } from './PostgresUserRepository'
 
 /**
- * PostgresAuditRepository — PostgreSQL implementation of IAuditService.
+ * PostgresAuditRepository — PostgreSQL implementation of IAuditRepository.
  * Persists security audit events to the audit_logs table.
  * All queries use parameterized placeholders to prevent SQL injection.
  */
-export class PostgresAuditRepository implements IAuditService {
+export class PostgresAuditRepository implements IAuditRepository {
   constructor(private readonly pool: DbPool) {}
 
-  async log(event: AuditEvent): Promise<void> {
+  async save(event: AuditEvent): Promise<void> {
     await this.pool.query(
       `INSERT INTO audit_logs (user_id, event_type, occurred_at, ip_address, device_info, metadata)
        VALUES ($1, $2, $3, $4, $5, $6)`,
