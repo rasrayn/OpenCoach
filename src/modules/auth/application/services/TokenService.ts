@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'crypto'
 import { RefreshToken, DeviceInfo } from '../../domain/entities/RefreshToken'
 import { ITokenRepository } from '../../domain/repositories/ITokenRepository'
+import { IUserRepository } from '../../domain/repositories/IUserRepository'
 import { ITokenSigner } from '../../domain/services/ITokenSigner'
 import { Role } from '../../domain/value-objects/Role'
 import { TokenPayload } from '../dtos'
@@ -26,6 +27,7 @@ export class TokenService implements ITokenService {
   constructor(
     private readonly tokenSigner: ITokenSigner,
     private readonly tokenRepository: ITokenRepository,
+    private readonly userRepository: IUserRepository,
     options: TokenServiceOptions = {}
   ) {
     this.now = options.now ?? (() => new Date())
@@ -45,14 +47,16 @@ export class TokenService implements ITokenService {
     userId: string,
     deviceId: string,
     role: Role,
-    deviceInfo: DeviceInfo | null = null
+    deviceInfo?: DeviceInfo
   ): Promise<IssuedRefreshToken> {
+    await this.tokenRepository.revokeActiveRefreshTokensForDevice(userId, deviceId)
+
     const plainToken = this.generateOpaqueToken()
     const record = await this.tokenRepository.saveRefreshToken({
       userId,
       tokenHash: hashToken(plainToken),
       deviceId,
-      deviceInfo,
+      deviceInfo: deviceInfo ?? null,
       role,
       expiresAt: this.calculateRefreshTokenExpiry(role),
       revokedAt: null,
@@ -62,7 +66,8 @@ export class TokenService implements ITokenService {
   }
 
   async verifyAndConsumeRefreshToken(token: string): Promise<ConsumedRefreshToken> {
-    const record = await this.tokenRepository.findRefreshTokenByHash(hashToken(token))
+    const tokenHash = hashToken(token)
+    const record = await this.tokenRepository.findRefreshTokenByHash(tokenHash)
     if (!record) {
       throw new Error('Refresh token not found')
     }
@@ -75,15 +80,24 @@ export class TokenService implements ITokenService {
       throw new Error('Refresh token expired')
     }
 
-    await this.tokenRepository.revokeRefreshToken(record.id)
+    const currentUser = await this.userRepository.findById(record.userId)
+    if (!currentUser) {
+      throw new Error('Refresh token user not found')
+    }
+
+    const consumed = await this.tokenRepository.consumeRefreshToken(record.id, tokenHash)
+    if (!consumed) {
+      throw new Error('Refresh token already consumed')
+    }
+
     const rotatedToken = await this.issueRefreshToken(
       record.userId,
       record.deviceId,
-      record.role,
-      record.deviceInfo
+      currentUser.role,
+      record.deviceInfo ?? undefined
     )
 
-    return { consumedToken: record, rotatedToken }
+    return { consumedToken: record, rotatedToken, currentUser }
   }
 
   async revokeRefreshToken(tokenId: string): Promise<void> {

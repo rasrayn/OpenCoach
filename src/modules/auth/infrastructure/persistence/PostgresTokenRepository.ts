@@ -5,8 +5,6 @@ import { PasswordResetToken } from '../../domain/entities/PasswordResetToken'
 import { Role } from '../../domain/value-objects/Role'
 import { DbPool } from './PostgresUserRepository'
 
-// ── Row mappers ───────────────────────────────────────────────────────────────
-
 function rowToRefreshToken(row: Record<string, unknown>): RefreshToken {
   return {
     id: row['id'] as string,
@@ -46,13 +44,13 @@ function rowToPasswordResetToken(row: Record<string, unknown>): PasswordResetTok
 }
 
 /**
- * PostgresTokenRepository — PostgreSQL implementation of ITokenRepository.
- * All queries use parameterized placeholders ($1, $2, …) to prevent SQL injection.
+ * PostgresTokenRepository - PostgreSQL implementation of ITokenRepository.
+ * All queries use parameterized placeholders ($1, $2, ...) to prevent SQL injection.
  */
 export class PostgresTokenRepository implements ITokenRepository {
   constructor(private readonly pool: DbPool) {}
 
-  // ── Refresh Tokens ──────────────────────────────────────────────────────────
+  // Refresh Tokens
 
   async saveRefreshToken(
     token: Omit<RefreshToken, 'id' | 'issuedAt'>
@@ -61,14 +59,6 @@ export class PostgresTokenRepository implements ITokenRepository {
       `INSERT INTO refresh_tokens
          (user_id, token_hash, device_id, device_info, role, expires_at, revoked_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
-       ON CONFLICT (user_id, device_id)
-         DO UPDATE SET
-           token_hash  = EXCLUDED.token_hash,
-           device_info = EXCLUDED.device_info,
-           role        = EXCLUDED.role,
-           issued_at   = NOW(),
-           expires_at  = EXCLUDED.expires_at,
-           revoked_at  = NULL
        RETURNING id, user_id, token_hash, device_id, device_info, role,
                  issued_at, expires_at, revoked_at`,
       [
@@ -96,10 +86,35 @@ export class PostgresTokenRepository implements ITokenRepository {
     return rowToRefreshToken(result.rows[0])
   }
 
+  async consumeRefreshToken(tokenId: string, tokenHash: string): Promise<boolean> {
+    const result = await this.pool.query(
+      `UPDATE refresh_tokens
+       SET revoked_at = NOW()
+       WHERE id = $1
+         AND token_hash = $2
+         AND revoked_at IS NULL
+         AND (expires_at IS NULL OR expires_at > NOW())`,
+      [tokenId, tokenHash]
+    )
+
+    return result.rowCount === 1
+  }
+
   async revokeRefreshToken(tokenId: string): Promise<void> {
     await this.pool.query(
       `UPDATE refresh_tokens SET revoked_at = NOW() WHERE id = $1`,
       [tokenId]
+    )
+  }
+
+  async revokeActiveRefreshTokensForDevice(userId: string, deviceId: string): Promise<void> {
+    await this.pool.query(
+      `UPDATE refresh_tokens
+       SET revoked_at = NOW()
+       WHERE user_id = $1
+         AND device_id = $2
+         AND revoked_at IS NULL`,
+      [userId, deviceId]
     )
   }
 
@@ -125,7 +140,7 @@ export class PostgresTokenRepository implements ITokenRepository {
     return result.rows.map(rowToRefreshToken)
   }
 
-  // ── Email Verification Tokens ───────────────────────────────────────────────
+  // Email Verification Tokens
 
   async saveEmailVerificationToken(
     token: Omit<EmailVerificationToken, 'id' | 'issuedAt'>
@@ -168,7 +183,7 @@ export class PostgresTokenRepository implements ITokenRepository {
     )
   }
 
-  // ── Password Reset Tokens ───────────────────────────────────────────────────
+  // Password Reset Tokens
 
   async savePasswordResetToken(
     token: Omit<PasswordResetToken, 'id' | 'issuedAt'>

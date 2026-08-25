@@ -52,7 +52,7 @@ async function bootstrap(): Promise<void> {
   const _emailService = new NodemailerEmailService()
   const _passwordHasher = new BcryptPasswordHasher()
   const _tokenSigner = new JwtTokenService()
-  const _tokenService = new TokenService(_tokenSigner, _tokenRepository)
+  const _tokenService = new TokenService(_tokenSigner, _tokenRepository, _userRepository)
 
   // --- Wire use-cases (Task 2+) ---
   // Use-cases will be instantiated and passed to controllers as tasks complete.

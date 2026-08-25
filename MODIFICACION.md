@@ -1361,3 +1361,146 @@ Resultado:
 - 5 suites de test pasando.
 - 47 tests pasando.
 - Build correcto.
+
+---
+
+## Correccion sobre refresh tokens: rol actual, historial y consumo atomico
+
+Tras revisar la implementacion de la tarea 7 aparecieron tres puntos importantes de seguridad.
+
+### 1. No confiar en el rol guardado en el refresh token para decisiones actuales
+
+El refresh token guardaba tambien el `role` del usuario. Eso puede ser util como dato historico, pero no debe ser la fuente principal para emitir nuevos permisos.
+
+Ejemplo peligroso:
+
+1. Un usuario era `ADMIN` cuando se emitio el refresh token.
+2. Dias despues se le baja a `COACH`.
+3. Usa el refresh token antiguo.
+4. Si el sistema confiara en `refreshToken.role`, podria seguir tratandolo como `ADMIN`.
+
+Para evitarlo, `TokenService.verifyAndConsumeRefreshToken()` ahora consulta el usuario actual mediante `IUserRepository.findById()` antes de rotar el token.
+
+La rotacion usa:
+
+```ts
+currentUser.role
+```
+
+y no:
+
+```ts
+record.role
+```
+
+Ademas, el resultado de `verifyAndConsumeRefreshToken()` devuelve `currentUser`, para que los futuros casos de uso no tengan que reutilizar datos historicos del token cuando emitan un nuevo access token.
+
+### 2. Evitar reutilizar la misma fila al rotar
+
+Antes, `PostgresTokenRepository.saveRefreshToken()` usaba:
+
+```sql
+ON CONFLICT (user_id, device_id) DO UPDATE
+```
+
+Eso hacia que una rotacion sobrescribiera la fila anterior.
+
+El problema es que una carrera de concurrencia podia interactuar mal con esa misma fila:
+
+1. Peticion A y peticion B leen el mismo refresh token valido.
+2. A lo consume.
+3. A rota y actualiza la misma fila con el nuevo token.
+4. B intenta consumir la misma fila, pero ahora podria estar viendo una fila activa otra vez.
+
+Para evitarlo, ahora cada refresh token emitido queda como una fila historica nueva. La fila antigua se marca como revocada y la nueva se inserta aparte.
+
+Esto permite detectar que un token antiguo reaparece como token ya revocado.
+
+### 3. Consumo atomico del refresh token
+
+El repositorio incorpora ahora:
+
+```ts
+consumeRefreshToken(tokenId, tokenHash): Promise<boolean>
+```
+
+En PostgreSQL se implementa con un `UPDATE` condicional:
+
+```sql
+UPDATE refresh_tokens
+SET revoked_at = NOW()
+WHERE id = $1
+  AND token_hash = $2
+  AND revoked_at IS NULL
+  AND (expires_at IS NULL OR expires_at > NOW())
+```
+
+La idea es que solo una peticion puede pasar de:
+
+```text
+revoked_at IS NULL
+```
+
+a:
+
+```text
+revoked_at = NOW()
+```
+
+Si dos peticiones intentan consumir el mismo token a la vez, una gana y la otra recibe `false`. Entonces `TokenService` rechaza la segunda con:
+
+```text
+Refresh token already consumed
+```
+
+y no emite otro refresh token.
+
+### 4. Un solo refresh token activo por dispositivo
+
+La migracion ahora permite historial de tokens, pero mantiene la regla de un token activo por dispositivo mediante un indice parcial:
+
+```sql
+CREATE UNIQUE INDEX idx_refresh_tokens_one_active_device
+  ON refresh_tokens(user_id, device_id)
+  WHERE revoked_at IS NULL;
+```
+
+Esto significa:
+
+- puede haber muchos tokens historicos para el mismo dispositivo;
+- solo uno puede estar activo a la vez.
+
+### 5. Sobre `deviceInfo?: DeviceInfo | null`
+
+Se simplifico la API publica a:
+
+```ts
+ deviceInfo?: DeviceInfo
+```
+
+Dentro del servicio, si no llega valor, se guarda como `null` en la entidad/DB.
+
+Asi evitamos exponer tres estados distintos (`undefined`, `null`, objeto) cuando realmente no estamos diferenciando semanticamente entre `undefined` y `null` a nivel de llamada.
+
+### 6. Reuse detection avanzada
+
+Todavia no se implemento una familia de tokens con `tokenFamilyId`, `parentTokenId` o `reusedAt`.
+
+Eso seria una mejora avanzada para detectar robo de refresh tokens y revocar toda la familia si reaparece un token antiguo.
+
+Lo que si queda cubierto ahora es la parte critica inmediata:
+
+- un mismo refresh token no puede consumirse dos veces;
+- los tokens antiguos no se sobrescriben;
+- un replay no genera nuevos tokens;
+- la rotacion usa el rol actual del usuario.
+
+### Tests nuevos de esta correccion
+
+Se anadieron pruebas para comprobar que:
+
+- la rotacion crea una fila nueva y revoca la historica;
+- un refresh token consumido no puede reutilizarse;
+- si el consumo atomico pierde la carrera, no se emite un token nuevo;
+- la rotacion usa el rol actual del usuario, no el rol historico guardado en el refresh token;
+- si el usuario ya no existe, el refresh token se rechaza.

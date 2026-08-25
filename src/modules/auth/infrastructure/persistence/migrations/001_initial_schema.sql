@@ -30,18 +30,20 @@ CREATE TABLE coach_profiles (
 CREATE TABLE refresh_tokens (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    token_hash  VARCHAR(64) NOT NULL,
+    token_hash  VARCHAR(64) NOT NULL UNIQUE,
     device_id   VARCHAR(255) NOT NULL,
     device_info JSONB,
     role        VARCHAR(20) NOT NULL,
     issued_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     expires_at  TIMESTAMPTZ,
-    revoked_at  TIMESTAMPTZ,
-    UNIQUE (user_id, device_id)
+    revoked_at  TIMESTAMPTZ
 );
 
 CREATE INDEX idx_refresh_tokens_user ON refresh_tokens(user_id);
 CREATE INDEX idx_refresh_tokens_hash ON refresh_tokens(token_hash);
+CREATE UNIQUE INDEX idx_refresh_tokens_one_active_device
+  ON refresh_tokens(user_id, device_id)
+  WHERE revoked_at IS NULL;
 
 -- ── email_verification_tokens ─────────────────────────────────────────────────
 CREATE TABLE email_verification_tokens (

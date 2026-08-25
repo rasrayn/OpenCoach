@@ -1,8 +1,10 @@
 import * as fc from 'fast-check'
-import { RefreshToken } from '../../../domain/entities/RefreshToken'
 import { EmailVerificationToken } from '../../../domain/entities/EmailVerificationToken'
 import { PasswordResetToken } from '../../../domain/entities/PasswordResetToken'
+import { RefreshToken } from '../../../domain/entities/RefreshToken'
+import { User } from '../../../domain/entities/User'
 import { ITokenRepository } from '../../../domain/repositories/ITokenRepository'
+import { IUserRepository } from '../../../domain/repositories/IUserRepository'
 import { ITokenSigner } from '../../../domain/services/ITokenSigner'
 import { Role } from '../../../domain/value-objects/Role'
 import { TokenPayload } from '../../dtos'
@@ -10,30 +12,66 @@ import { TokenService, hashToken } from '../TokenService'
 
 const now = new Date('2026-08-25T10:00:00.000Z')
 
+function createUser(overrides: Partial<User> = {}): User {
+  return {
+    id: 'user-1',
+    email: 'coach@example.com',
+    passwordHash: 'hash',
+    role: Role.COACH,
+    emailVerified: true,
+    isFirstAccess: false,
+    createdBy: null,
+    createdAt: now,
+    updatedAt: now,
+    ...overrides,
+  }
+}
+
+class InMemoryUserRepository implements IUserRepository {
+  constructor(private user: User | null = createUser()) {}
+
+  setUser(user: User | null): void {
+    this.user = user
+  }
+
+  async findById(id: string): Promise<User | null> {
+    return this.user?.id === id ? this.user : null
+  }
+
+  async findByEmail(email: string): Promise<User | null> {
+    return this.user?.email === email ? this.user : null
+  }
+
+  async save(user: Omit<User, 'id' | 'createdAt' | 'updatedAt'>): Promise<User> {
+    this.user = { ...user, id: 'user-1', createdAt: now, updatedAt: now }
+    return this.user
+  }
+
+  async update(id: string, updates: Partial<Omit<User, 'id' | 'createdAt'>>): Promise<User> {
+    if (!this.user || this.user.id !== id) throw new Error('User not found')
+    this.user = { ...this.user, ...updates, updatedAt: now }
+    return this.user
+  }
+
+  async delete(id: string): Promise<void> {
+    if (this.user?.id === id) this.user = null
+  }
+}
+
 class InMemoryTokenRepository implements ITokenRepository {
   readonly refreshTokens: RefreshToken[] = []
   readonly revokedTokenIds: string[] = []
+  forceNextConsumeResult: boolean | null = null
   private nextId = 1
 
   async saveRefreshToken(token: Omit<RefreshToken, 'id' | 'issuedAt'>): Promise<RefreshToken> {
-    const existingIndex = this.refreshTokens.findIndex(
-      (current) => current.userId === token.userId && current.deviceId === token.deviceId
-    )
     const saved: RefreshToken = {
       ...token,
-      id:
-        existingIndex >= 0
-          ? this.refreshTokens[existingIndex].id
-          : `refresh-token-${this.nextId++}`,
+      id: `refresh-token-${this.nextId++}`,
       issuedAt: now,
     }
 
-    if (existingIndex >= 0) {
-      this.refreshTokens[existingIndex] = saved
-    } else {
-      this.refreshTokens.push(saved)
-    }
-
+    this.refreshTokens.push(saved)
     return saved
   }
 
@@ -41,12 +79,43 @@ class InMemoryTokenRepository implements ITokenRepository {
     return this.refreshTokens.find((token) => token.tokenHash === tokenHash) ?? null
   }
 
-  async revokeRefreshToken(tokenId: string): Promise<void> {
-    this.revokedTokenIds.push(tokenId)
-    const token = this.refreshTokens.find((current) => current.id === tokenId)
-    if (token) {
-      token.revokedAt = now
+  async consumeRefreshToken(tokenId: string, tokenHash: string): Promise<boolean> {
+    if (this.forceNextConsumeResult !== null) {
+      const result = this.forceNextConsumeResult
+      this.forceNextConsumeResult = null
+      return result
     }
+
+    const token = this.refreshTokens.find(
+      (current) => current.id === tokenId && current.tokenHash === tokenHash
+    )
+    if (!token || token.revokedAt !== null || (token.expiresAt !== null && token.expiresAt <= now)) {
+      return false
+    }
+
+    token.revokedAt = now
+    this.revokedTokenIds.push(token.id)
+    return true
+  }
+
+  async revokeRefreshToken(tokenId: string): Promise<void> {
+    const token = this.refreshTokens.find((current) => current.id === tokenId)
+    if (token && token.revokedAt === null) {
+      token.revokedAt = now
+      this.revokedTokenIds.push(token.id)
+    }
+  }
+
+  async revokeActiveRefreshTokensForDevice(userId: string, deviceId: string): Promise<void> {
+    this.refreshTokens
+      .filter(
+        (token) =>
+          token.userId === userId && token.deviceId === deviceId && token.revokedAt === null
+      )
+      .forEach((token) => {
+        token.revokedAt = now
+        this.revokedTokenIds.push(token.id)
+      })
   }
 
   async revokeAllRefreshTokensForUser(userId: string): Promise<void> {
@@ -105,11 +174,16 @@ class FakeTokenSigner implements ITokenSigner {
   }
 }
 
-function createService(repository = new InMemoryTokenRepository(), tokens = ['opaque-refresh-token']) {
+function createService(
+  repository = new InMemoryTokenRepository(),
+  tokens = ['opaque-refresh-token'],
+  userRepository = new InMemoryUserRepository()
+) {
   let nextToken = 0
   return {
     repository,
-    service: new TokenService(new FakeTokenSigner(), repository, {
+    userRepository,
+    service: new TokenService(new FakeTokenSigner(), repository, userRepository, {
       now: () => now,
       generateOpaqueToken: () => tokens[nextToken++] ?? `opaque-refresh-token-${nextToken}`,
     }),
@@ -143,7 +217,7 @@ describe('TokenService - refresh tokens (Propiedad 5)', () => {
 })
 
 describe('TokenService - refresh rotation (Propiedad 16)', () => {
-  it('rotates a valid refresh token and revokes the consumed record', async () => {
+  it('rotates a valid refresh token and revokes only the consumed historical record', async () => {
     const { service, repository } = createService(undefined, ['first-token', 'rotated-token'])
     const issued = await service.issueRefreshToken('user-1', 'device-1', Role.COACH)
 
@@ -152,7 +226,46 @@ describe('TokenService - refresh rotation (Propiedad 16)', () => {
     expect(consumed.consumedToken.id).toBe(issued.record.id)
     expect(repository.revokedTokenIds).toEqual([issued.record.id])
     expect(consumed.rotatedToken.plainToken).toBe('rotated-token')
+    expect(consumed.rotatedToken.record.id).not.toBe(issued.record.id)
     expect(consumed.rotatedToken.record.tokenHash).toBe(hashToken('rotated-token'))
+    expect(repository.refreshTokens).toHaveLength(2)
+  })
+
+  it('uses the current user role when rotating, not the historical token role', async () => {
+    const userRepository = new InMemoryUserRepository(createUser({ role: Role.COACH }))
+    const { service } = createService(undefined, ['admin-era-token', 'coach-era-token'], userRepository)
+    const issued = await service.issueRefreshToken('user-1', 'device-1', Role.ADMIN)
+
+    const consumed = await service.verifyAndConsumeRefreshToken(issued.plainToken)
+
+    expect(consumed.currentUser.role).toBe(Role.COACH)
+    expect(consumed.rotatedToken.record.role).toBe(Role.COACH)
+    expect(consumed.rotatedToken.record.expiresAt?.getTime()).toBe(
+      now.getTime() + 7 * 24 * 60 * 60 * 1000
+    )
+  })
+
+  it('rejects replay of a consumed refresh token without issuing another token', async () => {
+    const { service, repository } = createService(undefined, ['first-token', 'rotated-token', 'bad'])
+    const issued = await service.issueRefreshToken('user-1', 'device-1', Role.COACH)
+
+    await service.verifyAndConsumeRefreshToken(issued.plainToken)
+
+    await expect(service.verifyAndConsumeRefreshToken(issued.plainToken)).rejects.toThrow(
+      'Refresh token revoked'
+    )
+    expect(repository.refreshTokens).toHaveLength(2)
+  })
+
+  it('does not rotate when the atomic consume operation loses the race', async () => {
+    const { service, repository } = createService(undefined, ['race-token', 'should-not-rotate'])
+    const issued = await service.issueRefreshToken('user-1', 'device-1', Role.COACH)
+    repository.forceNextConsumeResult = false
+
+    await expect(service.verifyAndConsumeRefreshToken(issued.plainToken)).rejects.toThrow(
+      'Refresh token already consumed'
+    )
+    expect(repository.refreshTokens).toHaveLength(1)
   })
 
   it('rejects revoked refresh tokens without rotating them', async () => {
@@ -177,6 +290,26 @@ describe('TokenService - refresh rotation (Propiedad 16)', () => {
     )
     expect(repository.revokedTokenIds).toEqual([])
     expect(repository.refreshTokens).toHaveLength(1)
+  })
+
+  it('rejects refresh tokens whose user no longer exists', async () => {
+    const repository = new InMemoryTokenRepository()
+    const issuingService = createService(
+      repository,
+      ['orphan-token'],
+      new InMemoryUserRepository(createUser())
+    ).service
+    await issuingService.issueRefreshToken('user-1', 'device-1', Role.COACH)
+
+    const missingUserService = createService(
+      repository,
+      ['unused-token'],
+      new InMemoryUserRepository(null)
+    ).service
+
+    await expect(missingUserService.verifyAndConsumeRefreshToken('orphan-token')).rejects.toThrow(
+      'Refresh token user not found'
+    )
   })
 
   it('rejects unknown refresh tokens', async () => {
