@@ -1185,3 +1185,39 @@ Production RateLimitService requires a shared atomic Redis store
 ```
 
 Esta decision hace que el sistema falle temprano en una mala configuracion, que es mejor que arrancar con una proteccion de seguridad incompleta.
+
+---
+
+## Revision pre-push: artefactos generados
+
+Antes de subir la rama a GitHub se ejecuto:
+
+```bash
+npm run build
+```
+
+El build funciono, pero genero la carpeta:
+
+```text
+dist/
+```
+
+Como el proyecto no tenia `.gitignore`, esa carpeta aparecia como archivo sin trackear y podria entrar accidentalmente en una PR.
+
+Se anadio un `.gitignore` minimo para un proyecto Node/TypeScript:
+
+```text
+node_modules/
+dist/
+coverage/
+.env
+```
+
+Esto evita subir:
+
+- dependencias instaladas;
+- artefactos compilados;
+- reportes de cobertura;
+- variables de entorno o secretos locales.
+
+Despues de anadirlo se repitio el build y `dist/` ya no ensucio el estado de Git.
