@@ -102,11 +102,15 @@ export class RedisRateLimitService implements IRateLimitService {
 
   private readonly store: RateLimitStore
 
-  constructor(store?: RateLimitStore, private readonly now: () => number = Date.now) {
-    this.store = store ?? new InMemoryRateLimitStore(now)
+  constructor(store: RateLimitStore, private readonly now: () => number = Date.now) {
+    this.store = store
   }
 
   static inMemoryForTesting(now: () => number = Date.now): RedisRateLimitService {
+    return new RedisRateLimitService(new InMemoryRateLimitStore(now), now)
+  }
+
+  static inMemoryForLocalDevelopment(now: () => number = Date.now): RedisRateLimitService {
     return new RedisRateLimitService(new InMemoryRateLimitStore(now), now)
   }
 

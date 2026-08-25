@@ -42,7 +42,12 @@ async function bootstrap(): Promise<void> {
   const _tokenRepository = new PostgresTokenRepository(dbPool)
   const _auditRepository = new PostgresAuditRepository(dbPool)
   const _auditService = new AuditService(_auditRepository)
-  const _rateLimitService = new RedisRateLimitService()
+  const _rateLimitService =
+    config.nodeEnv === 'production'
+      ? (() => {
+          throw new Error('Production RateLimitService requires a shared atomic Redis store')
+        })()
+      : RedisRateLimitService.inMemoryForLocalDevelopment()
   const _emailService = new NodemailerEmailService()
   const _passwordHasher = new BcryptPasswordHasher()
   const _tokenSigner = new JwtTokenService()

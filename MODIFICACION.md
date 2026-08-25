@@ -1145,3 +1145,43 @@ porque entre una y otra podria entrar otra peticion.
 Lo adecuado seria agruparlas con una transaccion Redis o con Lua para que el resultado sea consistente.
 
 Este detalle todavia no se implementa porque el proyecto no tiene cliente Redis real instalado, pero queda preparado conceptualmente en el contrato.
+
+---
+
+## Correccion de seguridad de configuracion: sin fallback implicito en produccion
+
+Tras revisar el codigo completo antes del push, detectamos otro riesgo:
+
+```ts
+new RedisRateLimitService()
+```
+
+Si el constructor crea automaticamente un store en memoria cuando no recibe nada, entonces el sistema podria arrancar accidentalmente con un rate limit local.
+
+Eso seria peligroso porque:
+
+- no es atomico;
+- no comparte estado entre servidores;
+- no representa una configuracion Redis real;
+- podria dar una falsa sensacion de proteccion en produccion.
+
+Por eso se cambio el constructor para exigir explicitamente un `RateLimitStore`:
+
+```ts
+constructor(store: RateLimitStore, now: () => number = Date.now)
+```
+
+Y se dejaron factories con nombre para los casos no productivos:
+
+```ts
+RedisRateLimitService.inMemoryForTesting(() => now)
+RedisRateLimitService.inMemoryForLocalDevelopment()
+```
+
+En `main.ts`, si `NODE_ENV` es `production`, el arranque falla con un mensaje claro hasta que exista un store Redis compartido y atomico:
+
+```text
+Production RateLimitService requires a shared atomic Redis store
+```
+
+Esta decision hace que el sistema falle temprano en una mala configuracion, que es mejor que arrancar con una proteccion de seguridad incompleta.
