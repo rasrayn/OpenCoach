@@ -1038,3 +1038,110 @@ Cuando un requerimiento habla de "N eventos en una ventana temporal", hay que di
 Son parecidos en lenguaje informal, pero no son equivalentes.
 
 Para seguridad y rate limiting, esta diferencia importa mucho.
+
+---
+
+## Limitacion del store en memoria: concurrencia y varios servidores
+
+El `InMemoryRateLimitStore` es util para tests y desarrollo local, pero no debe entenderse como sustituto de Redis en produccion.
+
+Hay dos motivos principales.
+
+### 1. Concurrencia
+
+En memoria, una operacion suele tener esta forma conceptual:
+
+```text
+leer estado actual
+calcular nuevo estado
+guardar nuevo estado
+```
+
+Con varias peticiones simultaneas podria ocurrir una condicion de carrera:
+
+```text
+Peticion A lee 4 intentos
+Peticion B lee 4 intentos
+
+A calcula 5
+B calcula 5
+
+A guarda 5
+B guarda 5
+```
+
+El resultado correcto deberia reflejar dos nuevos intentos, pero ambas peticiones partieron del mismo estado.
+
+Redis ayuda a resolver esto porque sus operaciones pueden hacerse de forma atomica. Para una sliding window real, una implementacion Redis deberia hacer atomico el conjunto:
+
+```text
+eliminar intentos antiguos
+anadir intento actual
+contar intentos activos
+establecer expiracion de limpieza
+```
+
+Una forma habitual seria usar un Sorted Set con una transaccion o script Lua.
+
+---
+
+### 2. Multiples servidores
+
+Si hay varios servidores de aplicacion:
+
+```text
+Servidor A
+Servidor B
+Servidor C
+```
+
+y cada uno usa su propio `Map`, cada servidor tendria una vision parcial.
+
+Un atacante podria repartir intentos:
+
+```text
+4 intentos -> servidor A
+4 intentos -> servidor B
+4 intentos -> servidor C
+```
+
+Ningun servidor individual veria el umbral completo.
+
+Redis resuelve este problema porque todos los servidores consultan el mismo estado compartido:
+
+```text
+Servidor A \
+Servidor B  -> Redis
+Servidor C /
+```
+
+Por eso la implementacion en memoria debe considerarse:
+
+- test double;
+- fallback local;
+- herramienta de desarrollo;
+- no almacenamiento distribuido de produccion.
+
+---
+
+## Contrato esperado para una implementacion Redis real
+
+La interfaz `RateLimitStore` ahora documenta una expectativa importante:
+
+```text
+recordAttempt debe ser atomico en produccion.
+```
+
+Eso significa que una implementacion real no deberia hacer tres llamadas independientes sin proteccion:
+
+```text
+ZREMRANGEBYSCORE
+ZADD
+ZCARD
+```
+
+porque entre una y otra podria entrar otra peticion.
+
+Lo adecuado seria agruparlas con una transaccion Redis o con Lua para que el resultado sea consistente.
+
+Este detalle todavia no se implementa porque el proyecto no tiene cliente Redis real instalado, pero queda preparado conceptualmente en el contrato.

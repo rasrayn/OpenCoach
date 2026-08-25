@@ -1,6 +1,11 @@
 import { IRateLimitService } from '../../application/ports/IRateLimitService'
 
 export interface RateLimitStore {
+  /**
+   * Records an attempt and returns the number of active attempts in the window.
+   * Production implementations must make prune/add/count atomic and use shared
+   * storage, for example a Redis sorted set updated through a transaction or Lua.
+   */
   recordAttempt(key: string, occurredAt: number, windowSeconds: number): Promise<number>
   setWithExpiry(key: string, value: string, seconds: number): Promise<void>
   ttl(key: string): Promise<number>
@@ -12,6 +17,10 @@ interface StoreEntry {
   expiresAt: number | null
 }
 
+/**
+ * Test/local store. It models sliding-window semantics, but it is not safe for
+ * production use across concurrent requests or multiple server instances.
+ */
 class InMemoryRateLimitStore implements RateLimitStore {
   private readonly entries = new Map<string, StoreEntry>()
   private readonly attempts = new Map<string, number[]>()
@@ -73,7 +82,8 @@ class InMemoryRateLimitStore implements RateLimitStore {
  * RedisRateLimitService - IRateLimitService implementation for brute-force protection.
  *
  * The service depends on a tiny Redis-like store contract so production can inject
- * a real Redis adapter while tests and local development use the in-memory store.
+ * a real Redis adapter. Tests and local development can use the in-memory store,
+ * but production should use shared atomic storage to avoid race conditions.
  *
  * Redis key scheme:
  *   account_fail:{email}  - attempt timestamps inside a 10-minute sliding window
