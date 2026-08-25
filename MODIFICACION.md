@@ -630,3 +630,108 @@ La siguiente tarea del plan es:
 ```
 
 Como ya se ejecutaron `typecheck` y tests, esta tarea probablemente consistira en revisar el estado acumulado de las tareas 4 y 5, confirmar que no hay dudas abiertas y dejar preparado el paso hacia `TokenService`.
+
+---
+
+## Criterio de testing para las siguientes tareas
+
+A partir de ahora el proyecto seguira como referencia la piramide de testing:
+
+```text
+        / E2E \
+       /------\
+      / Integr.\
+     /----------\
+    / Unit Tests \
+   /--------------\
+```
+
+Distribucion orientativa:
+
+- Unit tests: muchas pruebas, aproximadamente 60-70%.
+- Integration tests: cantidad moderada, aproximadamente 20-30%.
+- E2E tests: pocas pruebas, aproximadamente 5-10%.
+
+---
+
+## Como aplicarlo en este proyecto
+
+### 1. Priorizar unit tests
+
+La mayor parte de la logica debe probarse con unit tests porque son:
+
+- Rapidos.
+- Faciles de ejecutar.
+- Faciles de depurar.
+- Buenos para reglas de negocio aisladas.
+
+Ejemplos adecuados:
+
+- Validacion de password.
+- Calculo de expiracion de tokens.
+- Reglas de roles.
+- Bloqueo por intentos fallidos.
+- Normalizacion de eventos de auditoria.
+
+---
+
+### 2. Usar integration tests cuando haya colaboracion real entre piezas
+
+Los tests de integracion deben comprobar que varias partes colaboran correctamente.
+
+Ejemplos adecuados:
+
+- Caso de uso + repositorio en memoria.
+- Servicio de autenticacion + token service + rate limit.
+- Repositorio PostgreSQL contra una base de datos de test.
+- Flujo de email verification usando repositorios reales o dobles controlados.
+
+No deben duplicar todos los casos unitarios. Deben centrarse en las uniones importantes.
+
+---
+
+### 3. Mantener pocos E2E tests
+
+Los E2E son valiosos, pero son mas lentos y fragiles.
+
+Se usaran para flujos completos realmente criticos:
+
+- Registro completo de entrenador.
+- Login completo.
+- Recuperacion de contrasena.
+- Creacion de atleta por entrenador.
+- Cambio de contrasena en primer acceso.
+
+La idea no es cubrir todas las combinaciones con E2E, sino comprobar que los caminos principales del sistema estan conectados de extremo a extremo.
+
+---
+
+## Evitar tests solo del happy path
+
+Una regla importante para este proyecto: evitar tests que solo demuestran que "todo va bien cuando todo es correcto".
+
+El happy path puede existir, pero no debe ser el centro de la estrategia.
+
+Para cada funcionalidad nueva intentaremos pensar tambien:
+
+- Que pasa si falta un dato obligatorio.
+- Que pasa si el usuario no tiene permisos.
+- Que pasa si el token esta expirado.
+- Que pasa si el recurso ya fue usado.
+- Que pasa si se supera un limite.
+- Que pasa si hay datos validos pero en una combinacion no permitida.
+
+Esto ayuda a aprender una idea clave: un sistema robusto no se valida solo por lo que permite, sino tambien por lo que rechaza correctamente.
+
+---
+
+## Regla practica para proximas tareas
+
+Cuando implementemos una tarea nueva, intentaremos dejar al menos:
+
+- Unit tests para reglas internas.
+- Tests de propiedad cuando exista una invariante clara.
+- Integration tests solo si la tarea une varias piezas importantes.
+- E2E tests solo para flujos completos de alto valor.
+
+Y siempre que sea posible, los tests deben comprobar comportamiento observable, no detalles internos de implementacion.
