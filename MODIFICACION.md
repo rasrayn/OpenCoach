@@ -1221,3 +1221,36 @@ Esto evita subir:
 - variables de entorno o secretos locales.
 
 Despues de anadirlo se repitio el build y `dist/` ya no ensucio el estado de Git.
+
+---
+
+## Tarea 6: punto de control de servicios de infraestructura
+
+La tarea 6 no pedia implementar una pieza nueva, sino parar y verificar que lo construido hasta ahora seguia siendo coherente.
+
+Esto es importante porque ya tenemos varias piezas de infraestructura conectadas:
+
+- `AuditService`, que registra eventos de auditoria mediante un repositorio.
+- `RedisRateLimitService`, que protege contra intentos fallidos por cuenta y por IP.
+- Tests de dominio, aplicacion e infraestructura.
+- Protecciones de configuracion para no usar almacenamiento en memoria por accidente en produccion.
+
+En este punto se ejecutaron estas comprobaciones:
+
+```bash
+npm run typecheck
+npm test -- --runInBand
+npm run build
+git diff --check
+```
+
+Resultado:
+
+- TypeScript compila sin errores de tipos.
+- La suite de tests pasa completa: 3 suites y 37 tests.
+- El build de produccion se genera correctamente.
+- No hay errores de espacios detectados por Git.
+
+Tambien se reviso que las clases todavia no implementadas pertenezcan a tareas posteriores, por ejemplo `TokenService`, `PasswordHasher`, `EmailService` y controladores. Esos stubs no bloquean esta tarea porque forman parte del plan incremental.
+
+La idea practica de este checkpoint es sencilla: antes de seguir construyendo encima, confirmamos que la base no se ha torcido. Asi, si en la siguiente tarea aparece un fallo, sera mucho mas facil acotar si viene del cambio nuevo y no de una deuda silenciosa anterior.

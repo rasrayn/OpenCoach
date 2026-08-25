@@ -104,7 +104,7 @@ Este plan convierte el diseño técnico en pasos de codificación incrementales 
     - Verificar que exactamente 20 intentos fallidos desde la misma IP activan el bloqueo de 30 minutos con HTTP 429
     - **Valida: Requerimiento 12.4**
 
-- [ ] 6. Punto de control — verificar servicios de infraestructura
+- [x] 6. Punto de control — verificar servicios de infraestructura
   - Asegurarse de que todas las pruebas pasen hasta este punto; consultar al usuario si surgen dudas.
 
 - [ ] 7. Implementar `TokenService`
