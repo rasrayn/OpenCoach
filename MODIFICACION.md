@@ -860,3 +860,46 @@ Resultado:
 RateLimitService tests passed
 Typecheck passed
 ```
+
+---
+
+## Correccion de legibilidad: evitar `undefined` como placeholder
+
+En los tests aparecia esta construccion:
+
+```ts
+new RedisRateLimitService(undefined, () => now)
+```
+
+Funcionaba porque el constructor era:
+
+```ts
+constructor(store?: RateLimitStore, now: () => number = Date.now)
+```
+
+Es decir:
+
+- `undefined` significaba "usa el store por defecto".
+- `() => now` era el reloj controlado para el test.
+
+Aunque era correcto tecnicamente, no era ideal para aprender ni para mantener el codigo.
+
+El problema es que el lector tiene que conocer el orden exacto de parametros para entenderlo. Ademas, si el constructor cambia en el futuro, ese patron puede volverse fragil.
+
+Se cambio por un factory explicito:
+
+```ts
+RedisRateLimitService.inMemoryForTesting(() => now)
+```
+
+Ahora el test expresa mejor la intencion:
+
+```text
+Quiero una version en memoria del servicio, pensada para tests, con un reloj controlado.
+```
+
+Esta es una pequena mejora de diseno, pero importante como habito:
+
+- Los tests deben ser claros.
+- Los helpers de test deben explicar la intencion.
+- Evitar `undefined` como relleno suele mejorar la legibilidad.

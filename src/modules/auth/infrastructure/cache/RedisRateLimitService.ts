@@ -105,6 +105,10 @@ export class RedisRateLimitService implements IRateLimitService {
     this.store = store ?? new InMemoryRateLimitStore(now)
   }
 
+  static inMemoryForTesting(now: () => number = Date.now): RedisRateLimitService {
+    return new RedisRateLimitService(new InMemoryRateLimitStore(now))
+  }
+
   async recordFailedAttempt(accountKey: string): Promise<void> {
     const failKey = this.accountFailKey(accountKey)
     const attempts = await this.store.increment(failKey)

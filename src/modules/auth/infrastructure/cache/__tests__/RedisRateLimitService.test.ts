@@ -6,7 +6,7 @@ describe('RedisRateLimitService - account blocking (Propiedad 7)', () => {
     await fc.assert(
       fc.asyncProperty(fc.emailAddress(), async (email) => {
         let now = 0
-        const service = new RedisRateLimitService(undefined, () => now)
+        const service = RedisRateLimitService.inMemoryForTesting(() => now)
 
         for (let attempt = 1; attempt < RedisRateLimitService.ACCOUNT_FAILURE_THRESHOLD; attempt++) {
           await service.recordFailedAttempt(email)
@@ -36,7 +36,7 @@ describe('RedisRateLimitService - account blocking (Propiedad 7)', () => {
     await fc.assert(
       fc.asyncProperty(fc.emailAddress(), attemptOffsetsInsideWindowArb, async (email, offsets) => {
         let now = 0
-        const service = new RedisRateLimitService(undefined, () => now)
+        const service = RedisRateLimitService.inMemoryForTesting(() => now)
 
         await service.recordFailedAttempt(email)
         expect((await service.isAccountBlocked(email)).blocked).toBe(false)
@@ -58,7 +58,7 @@ describe('RedisRateLimitService - account blocking (Propiedad 7)', () => {
   it('does not count account attempts that expired outside the 10-minute window', async () => {
     let now = 0
     const email = 'window-reset@example.com'
-    const service = new RedisRateLimitService(undefined, () => now)
+    const service = RedisRateLimitService.inMemoryForTesting(() => now)
 
     for (let attempt = 0; attempt < RedisRateLimitService.ACCOUNT_FAILURE_THRESHOLD - 1; attempt++) {
       await service.recordFailedAttempt(email)
@@ -75,7 +75,7 @@ describe('RedisRateLimitService - account blocking (Propiedad 7)', () => {
   it('unblocks the account after the 15-minute block TTL expires', async () => {
     let now = 0
     const email = 'athlete@example.com'
-    const service = new RedisRateLimitService(undefined, () => now)
+    const service = RedisRateLimitService.inMemoryForTesting(() => now)
 
     for (let attempt = 0; attempt < RedisRateLimitService.ACCOUNT_FAILURE_THRESHOLD; attempt++) {
       await service.recordFailedAttempt(email)
@@ -91,7 +91,7 @@ describe('RedisRateLimitService - account blocking (Propiedad 7)', () => {
   it('resets account failed attempts after successful authentication', async () => {
     let now = 0
     const email = 'coach@example.com'
-    const service = new RedisRateLimitService(undefined, () => now)
+    const service = RedisRateLimitService.inMemoryForTesting(() => now)
 
     for (let attempt = 0; attempt < RedisRateLimitService.ACCOUNT_FAILURE_THRESHOLD - 1; attempt++) {
       await service.recordFailedAttempt(email)
@@ -121,7 +121,7 @@ describe('RedisRateLimitService - IP blocking (Propiedad 23)', () => {
     await fc.assert(
       fc.asyncProperty(ipAddressArb, async (ip) => {
         let now = 0
-        const service = new RedisRateLimitService(undefined, () => now)
+        const service = RedisRateLimitService.inMemoryForTesting(() => now)
 
         for (let attempt = 1; attempt < RedisRateLimitService.IP_FAILURE_THRESHOLD; attempt++) {
           await service.recordIpAttempt(ip)
@@ -143,7 +143,7 @@ describe('RedisRateLimitService - IP blocking (Propiedad 23)', () => {
   it('unblocks the IP after the 30-minute block TTL expires', async () => {
     let now = 0
     const ip = '203.0.113.10'
-    const service = new RedisRateLimitService(undefined, () => now)
+    const service = RedisRateLimitService.inMemoryForTesting(() => now)
 
     for (let attempt = 0; attempt < RedisRateLimitService.IP_FAILURE_THRESHOLD; attempt++) {
       await service.recordIpAttempt(ip)
