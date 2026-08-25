@@ -434,22 +434,32 @@ Leer `900` suelto no explica mucho. Leer `ACCOUNT_BLOCK_SECONDS` si explica la i
 
 ---
 
-### 4. TTL deslizante
+### 4. Sliding window real
 
-El contador de fallos usa TTL deslizante.
+La primera aproximacion usaba un contador con TTL deslizante. Eso era util, pero tenia un matiz importante: no era una sliding window real.
 
-Eso significa que cada intento fallido renueva la ventana de tiempo:
+Un contador con TTL renovado puede terminar contando intentos repartidos durante mucho mas de 10 minutos, siempre que entre un intento y el siguiente no pase el TTL completo.
+
+Para cumplir mejor el requisito de "5 intentos en un periodo de 10 minutos", el store ahora registra timestamps de intentos:
 
 ```ts
-await this.store.increment(failKey)
-await this.store.expire(failKey, RedisRateLimitService.ACCOUNT_FAILURE_WINDOW_SECONDS)
+recordAttempt(key: string, occurredAt: number, windowSeconds: number): Promise<number>
 ```
 
-Ejemplo con cuenta:
+Cada vez que llega un intento:
 
-1. Primer fallo: se crea `account_fail:email` con TTL de 10 minutos.
-2. Segundo fallo: sube el contador y se renueva el TTL a otros 10 minutos.
-3. Al quinto fallo: se crea `account_block:email` con TTL de 15 minutos.
+1. Se calcula el inicio de la ventana.
+2. Se eliminan los intentos anteriores a esa ventana.
+3. Se anade el intento actual.
+4. Se devuelve cuantos intentos siguen activos dentro de la ventana.
+
+Conceptualmente:
+
+```text
+ventana valida = [ahora - 10 minutos, ahora]
+```
+
+Solo los intentos dentro de esa ventana cuentan para decidir si se bloquea la cuenta.
 
 ---
 
@@ -459,8 +469,7 @@ Como el proyecto todavia no tiene dependencia real de Redis instalada, se creo u
 
 ```ts
 export interface RateLimitStore {
-  increment(key: string): Promise<number>
-  expire(key: string, seconds: number): Promise<void>
+  recordAttempt(key: string, occurredAt: number, windowSeconds: number): Promise<number>
   setWithExpiry(key: string, value: string, seconds: number): Promise<void>
   ttl(key: string): Promise<number>
   delete(key: string): Promise<void>
@@ -479,7 +488,8 @@ Tambien se creo `InMemoryRateLimitStore`.
 
 Su funcion es simular el comportamiento basico de Redis:
 
-- Incrementar contadores.
+- Guardar timestamps de intentos.
+- Eliminar intentos que quedan fuera de la ventana.
 - Guardar claves con expiracion.
 - Calcular TTL restante.
 - Eliminar claves expiradas.
@@ -903,3 +913,128 @@ Esta es una pequena mejora de diseno, pero importante como habito:
 - Los tests deben ser claros.
 - Los helpers de test deben explicar la intencion.
 - Evitar `undefined` como relleno suele mejorar la legibilidad.
+
+---
+
+## Correccion de algoritmo: contador con TTL no es sliding window real
+
+Durante una nueva revision detectamos un matiz importante en `RedisRateLimitService`.
+
+La primera implementacion guardaba:
+
+```text
+contador + expiracion
+```
+
+Eso puede servir para una fixed window o para un contador con TTL renovado, pero no representa exactamente una sliding window real.
+
+El problema es que no conserva informacion individual de cada intento.
+
+Por ejemplo, con un contador simple:
+
+```text
+00:00 -> intento 1
+00:09 -> intento 2
+00:18 -> intento 3
+00:27 -> intento 4
+00:36 -> intento 5
+```
+
+Si el TTL se renueva en cada intento, el contador podria llegar a 5 y bloquear.
+
+Pero esos 5 intentos no ocurrieron dentro del mismo periodo de 10 minutos.
+
+Por tanto, para cumplir correctamente:
+
+```text
+5 intentos fallidos en un periodo de 10 minutos
+```
+
+no basta con guardar un contador.
+
+Hay que guardar timestamps, o una estructura equivalente, y contar solo los intentos que siguen dentro de la ventana temporal.
+
+---
+
+## Implementacion corregida
+
+El store ahora expone:
+
+```ts
+recordAttempt(key: string, occurredAt: number, windowSeconds: number): Promise<number>
+```
+
+La version en memoria guarda un array de timestamps por clave.
+
+Cuando llega un intento:
+
+```ts
+const windowStart = occurredAt - windowSeconds * 1000
+const activeAttempts = attempts.filter((attemptAt) => attemptAt >= windowStart)
+activeAttempts.push(occurredAt)
+```
+
+Asi solo se cuentan intentos activos dentro de:
+
+```text
+[ahora - ventana, ahora]
+```
+
+En una implementacion Redis real, este patron podria mapearse bien a un Sorted Set:
+
+```text
+ZADD account_fail:{email} timestamp timestamp
+ZREMRANGEBYSCORE account_fail:{email} -inf windowStart
+ZCARD account_fail:{email}
+EXPIRE account_fail:{email} windowSeconds
+```
+
+La idea importante no es la estructura exacta, sino la propiedad:
+
+```text
+El contador de bloqueo debe derivarse de intentos todavia vigentes dentro de la ventana.
+```
+
+---
+
+## Tests anadidos para capturar este bug
+
+Se anadieron tests que habrian fallado con un contador de TTL renovado:
+
+```text
+Intentos individualmente cercanos, pero repartidos fuera de la misma ventana.
+```
+
+Ejemplo conceptual:
+
+```text
+00:00 -> intento
+00:09 -> intento
+00:18 -> intento
+00:27 -> intento
+00:36 -> intento
+```
+
+Cada intento esta a menos de 10 minutos del anterior, pero los 5 no pertenecen a una unica ventana de 10 minutos.
+
+Resultado esperado:
+
+```text
+No bloquear.
+```
+
+Tambien se anadio el mismo tipo de test para IP usando la ventana de 5 minutos.
+
+---
+
+## Segunda leccion aprendida
+
+Cuando un requerimiento habla de "N eventos en una ventana temporal", hay que distinguir:
+
+- Fixed window: contador que se reinicia por bloques de tiempo.
+- Sliding expiration counter: contador cuyo TTL se renueva con cada evento.
+- Sliding window real: conteo de eventos con timestamp dentro de `[ahora - ventana, ahora]`.
+
+Son parecidos en lenguaje informal, pero no son equivalentes.
+
+Para seguridad y rate limiting, esta diferencia importa mucho.

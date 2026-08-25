@@ -1,8 +1,7 @@
 import { IRateLimitService } from '../../application/ports/IRateLimitService'
 
 export interface RateLimitStore {
-  increment(key: string): Promise<number>
-  expire(key: string, seconds: number): Promise<void>
+  recordAttempt(key: string, occurredAt: number, windowSeconds: number): Promise<number>
   setWithExpiry(key: string, value: string, seconds: number): Promise<void>
   ttl(key: string): Promise<number>
   delete(key: string): Promise<void>
@@ -15,29 +14,20 @@ interface StoreEntry {
 
 class InMemoryRateLimitStore implements RateLimitStore {
   private readonly entries = new Map<string, StoreEntry>()
+  private readonly attempts = new Map<string, number[]>()
 
   constructor(private readonly now: () => number) {}
 
-  async increment(key: string): Promise<number> {
-    const current = this.getActiveEntry(key)
-    const nextValue = current ? Number(current.value) + 1 : 1
+  async recordAttempt(key: string, occurredAt: number, windowSeconds: number): Promise<number> {
+    const windowStart = occurredAt - windowSeconds * 1000
+    const activeAttempts = (this.attempts.get(key) ?? []).filter(
+      (attemptAt) => attemptAt >= windowStart
+    )
+    activeAttempts.push(occurredAt)
 
-    this.entries.set(key, {
-      value: String(nextValue),
-      expiresAt: current?.expiresAt ?? null,
-    })
+    this.attempts.set(key, activeAttempts)
 
-    return nextValue
-  }
-
-  async expire(key: string, seconds: number): Promise<void> {
-    const current = this.getActiveEntry(key)
-    if (!current) return
-
-    this.entries.set(key, {
-      ...current,
-      expiresAt: this.now() + seconds * 1000,
-    })
+    return activeAttempts.length
   }
 
   async setWithExpiry(key: string, value: string, seconds: number): Promise<void> {
@@ -63,6 +53,7 @@ class InMemoryRateLimitStore implements RateLimitStore {
 
   async delete(key: string): Promise<void> {
     this.entries.delete(key)
+    this.attempts.delete(key)
   }
 
   private getActiveEntry(key: string): StoreEntry | null {
@@ -85,9 +76,9 @@ class InMemoryRateLimitStore implements RateLimitStore {
  * a real Redis adapter while tests and local development use the in-memory store.
  *
  * Redis key scheme:
- *   account_fail:{email}  - sliding counter (TTL: 10 min)
+ *   account_fail:{email}  - attempt timestamps inside a 10-minute sliding window
  *   account_block:{email} - block flag    (TTL: 900 s = 15 min)
- *   ip_fail:{ip}          - sliding counter (TTL: 5 min)
+ *   ip_fail:{ip}          - attempt timestamps inside a 5-minute sliding window
  *   ip_block:{ip}         - block flag    (TTL: 1800 s = 30 min)
  */
 export class RedisRateLimitService implements IRateLimitService {
@@ -101,18 +92,20 @@ export class RedisRateLimitService implements IRateLimitService {
 
   private readonly store: RateLimitStore
 
-  constructor(store?: RateLimitStore, now: () => number = Date.now) {
+  constructor(store?: RateLimitStore, private readonly now: () => number = Date.now) {
     this.store = store ?? new InMemoryRateLimitStore(now)
   }
 
   static inMemoryForTesting(now: () => number = Date.now): RedisRateLimitService {
-    return new RedisRateLimitService(new InMemoryRateLimitStore(now))
+    return new RedisRateLimitService(new InMemoryRateLimitStore(now), now)
   }
 
   async recordFailedAttempt(accountKey: string): Promise<void> {
-    const failKey = this.accountFailKey(accountKey)
-    const attempts = await this.store.increment(failKey)
-    await this.store.expire(failKey, RedisRateLimitService.ACCOUNT_FAILURE_WINDOW_SECONDS)
+    const attempts = await this.store.recordAttempt(
+      this.accountFailKey(accountKey),
+      this.now(),
+      RedisRateLimitService.ACCOUNT_FAILURE_WINDOW_SECONDS
+    )
 
     if (attempts >= RedisRateLimitService.ACCOUNT_FAILURE_THRESHOLD) {
       await this.store.setWithExpiry(
@@ -134,9 +127,11 @@ export class RedisRateLimitService implements IRateLimitService {
   }
 
   async recordIpAttempt(ip: string): Promise<void> {
-    const failKey = this.ipFailKey(ip)
-    const attempts = await this.store.increment(failKey)
-    await this.store.expire(failKey, RedisRateLimitService.IP_FAILURE_WINDOW_SECONDS)
+    const attempts = await this.store.recordAttempt(
+      this.ipFailKey(ip),
+      this.now(),
+      RedisRateLimitService.IP_FAILURE_WINDOW_SECONDS
+    )
 
     if (attempts >= RedisRateLimitService.IP_FAILURE_THRESHOLD) {
       await this.store.setWithExpiry(
