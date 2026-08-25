@@ -1,9 +1,9 @@
 /**
- * main.ts — Composition Root
+ * main.ts - Composition Root
  *
  * This is the single place where all concrete implementations are instantiated
  * and wired together (Dependency Inversion Principle). No use-case or domain
- * class knows about these concrete implementations — they only depend on
+ * class knows about these concrete implementations - they only depend on
  * interfaces defined in the domain and application layers.
  *
  * Full wiring is completed progressively as each task is implemented.
@@ -21,6 +21,7 @@ import { NodemailerEmailService } from './modules/auth/infrastructure/email/Node
 import { BcryptPasswordHasher } from './modules/auth/infrastructure/security/BcryptPasswordHasher'
 import { JwtTokenService } from './modules/auth/infrastructure/security/JwtTokenService'
 import { AuditService } from './modules/auth/application/services/AuditService'
+import { TokenService } from './modules/auth/application/services/TokenService'
 
 async function bootstrap(): Promise<void> {
   const config = loadConfig()
@@ -51,12 +52,13 @@ async function bootstrap(): Promise<void> {
   const _emailService = new NodemailerEmailService()
   const _passwordHasher = new BcryptPasswordHasher()
   const _tokenSigner = new JwtTokenService()
+  const _tokenService = new TokenService(_tokenSigner, _tokenRepository)
 
   // --- Wire use-cases (Task 2+) ---
   // Use-cases will be instantiated and passed to controllers as tasks complete.
 
   // --- Start HTTP server (Task 14) ---
-  logger.info('Composition Root initialised — HTTP server wiring added in Task 14')
+  logger.info('Composition Root initialised - HTTP server wiring added in Task 14')
 }
 
 bootstrap().catch((error: unknown) => {

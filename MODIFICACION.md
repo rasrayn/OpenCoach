@@ -1254,3 +1254,110 @@ Resultado:
 Tambien se reviso que las clases todavia no implementadas pertenezcan a tareas posteriores, por ejemplo `TokenService`, `PasswordHasher`, `EmailService` y controladores. Esos stubs no bloquean esta tarea porque forman parte del plan incremental.
 
 La idea practica de este checkpoint es sencilla: antes de seguir construyendo encima, confirmamos que la base no se ha torcido. Asi, si en la siguiente tarea aparece un fallo, sera mucho mas facil acotar si viene del cambio nuevo y no de una deuda silenciosa anterior.
+
+---
+
+## Tarea 7: TokenService, JWT RS256 y refresh tokens
+
+En esta tarea se implemento la gestion de tokens en dos niveles para separar responsabilidades:
+
+- `JwtTokenService`, en infraestructura, se encarga solo de firmar y verificar access tokens JWT con RS256.
+- `TokenService`, en aplicacion, coordina la emision de access tokens y la vida de los refresh tokens usando `ITokenRepository`.
+
+### Access tokens JWT
+
+Los access tokens ahora:
+
+- usan algoritmo `RS256`;
+- incluyen `iat`, `exp` y `jti`;
+- expiran a los 15 minutos;
+- rechazan tokens expirados;
+- rechazan tokens con firma manipulada;
+- rechazan tokens con roles fuera del enum real del sistema.
+
+No se ha usado una dependencia externa tipo `jsonwebtoken`; se ha implementado con `crypto` de Node para mantener el proyecto ligero en esta fase y entender bien las piezas: header, payload, firma, base64url y verificacion.
+
+### Seguridad de claves
+
+Las claves privadas y publicas no se suben a GitHub.
+
+El servicio lee las rutas desde configuracion:
+
+```text
+JWT_PRIVATE_KEY_PATH=./keys/private.pem
+JWT_PUBLIC_KEY_PATH=./keys/public.pem
+```
+
+Y se actualizo `.gitignore` para ignorar:
+
+```text
+keys/
+*.pem
+```
+
+Tambien se creo `.env.example`, pero solo con placeholders y rutas de ejemplo. El archivo real `.env` sigue ignorado.
+
+La idea importante es esta:
+
+- `.env.example` se puede commitear porque ensena que variables existen.
+- `.env` no se commitea porque contiene valores reales.
+- `keys/private.pem` no se commitea porque es material criptografico privado.
+
+### Refresh tokens
+
+Los refresh tokens se implementaron como tokens opacos: el cliente recibe un valor aleatorio, pero en base de datos solo se guarda su SHA-256.
+
+Eso significa que si alguien leyera accidentalmente la tabla `refresh_tokens`, no tendria directamente los tokens utilizables por los clientes.
+
+La duracion depende del rol:
+
+- `ADMIN`: 1 dia.
+- `COACH`: 7 dias.
+- `ATHLETE`: sin expiracion temporal, solo revocacion.
+
+Esta regla viene del requerimiento 8.
+
+### Rotacion
+
+Cuando se consume un refresh token valido:
+
+1. Se calcula su hash.
+2. Se busca en el repositorio.
+3. Se rechaza si no existe, esta revocado o esta expirado.
+4. Se revoca el token actual.
+5. Se emite un nuevo refresh token para el mismo usuario/dispositivo.
+
+Esto reduce el riesgo de reutilizacion: un refresh token usado deja de ser el valor valido para esa sesion.
+
+### Tests anadidos
+
+Se anadieron tests unitarios y de propiedad, siguiendo la piramide de test:
+
+- JWT con expiracion exacta de 15 minutos y `jti` unico.
+- Rechazo de JWT expirado.
+- Rechazo de JWT manipulado.
+- Rechazo de JWT mal formado.
+- Rechazo de JWT firmado pero con rol invalido.
+- Duracion de refresh token segun rol.
+- Comprobacion de que el token opaco no se guarda en claro.
+- Rotacion de refresh token valido.
+- Rechazo de refresh tokens revocados, expirados o desconocidos.
+
+No se han creado tests E2E en esta fase porque aun no esta implementado el controlador HTTP completo. La equivalencia HTTP 401 de algunos rechazos se comprobara cuando se implemente el caso de uso/controlador de refresco.
+
+### Resultado de verificacion
+
+Se ejecuto:
+
+```bash
+npm run typecheck
+npm test -- --runInBand
+npm run build
+```
+
+Resultado:
+
+- TypeScript sin errores.
+- 5 suites de test pasando.
+- 47 tests pasando.
+- Build correcto.
