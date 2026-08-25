@@ -347,3 +347,286 @@ Antes de empezar esa tarea conviene revisar:
 - El diseno de claves Redis.
 - Los requerimientos 4.5, 4.6 y 12.4.
 - Como se van a testear los TTL y bloqueos sin depender necesariamente de Redis real.
+
+---
+
+## Modificacion 2: Implementacion de `RateLimitService` (Tarea 5)
+
+### Contexto
+
+La tarea 5 pedia implementar la proteccion contra fuerza bruta:
+
+- Bloqueo de cuenta tras 5 intentos fallidos en 10 minutos.
+- Bloqueo temporal de la cuenta durante 15 minutos.
+- Bloqueo de IP tras 20 intentos fallidos en 5 minutos.
+- Bloqueo temporal de la IP durante 30 minutos.
+- Tests de propiedad para comprobar los umbrales y expiraciones.
+
+Esta parte corresponde a los requerimientos:
+
+- 4.5: bloquear una cuenta tras 5 intentos fallidos consecutivos en 10 minutos.
+- 4.6: rechazar intentos mientras la cuenta esta bloqueada e indicar tiempo restante.
+- 12.4: bloquear una IP tras mas intentos fallidos desde la misma direccion.
+
+---
+
+## Que se ha creado
+
+### 1. Implementacion de `RedisRateLimitService`
+
+Archivo:
+
+```text
+src/modules/auth/infrastructure/cache/RedisRateLimitService.ts
+```
+
+El servicio ahora implementa todos los metodos del puerto `IRateLimitService`:
+
+```ts
+recordFailedAttempt(accountKey: string): Promise<void>
+isAccountBlocked(accountKey: string): Promise<{ blocked: boolean; remainingSeconds?: number }>
+resetAccountAttempts(accountKey: string): Promise<void>
+recordIpAttempt(ip: string): Promise<void>
+isIpBlocked(ip: string): Promise<{ blocked: boolean; remainingSeconds?: number }>
+```
+
+Antes estos metodos lanzaban errores de "Not implemented". Ahora contienen la logica de conteo, TTL y bloqueo.
+
+---
+
+### 2. Claves usadas para rate limiting
+
+Se siguio el diseno indicado:
+
+```text
+account_fail:{email}
+account_block:{email}
+ip_fail:{ip}
+ip_block:{ip}
+```
+
+Cada tipo de clave tiene una responsabilidad:
+
+- `account_fail:{email}` cuenta intentos fallidos de una cuenta.
+- `account_block:{email}` indica que una cuenta esta bloqueada.
+- `ip_fail:{ip}` cuenta intentos fallidos desde una IP.
+- `ip_block:{ip}` indica que una IP esta bloqueada.
+
+---
+
+### 3. Umbrales y duraciones
+
+Se definieron constantes dentro de `RedisRateLimitService`:
+
+```ts
+static readonly ACCOUNT_FAILURE_WINDOW_SECONDS = 600
+static readonly ACCOUNT_BLOCK_SECONDS = 900
+static readonly ACCOUNT_FAILURE_THRESHOLD = 5
+
+static readonly IP_FAILURE_WINDOW_SECONDS = 300
+static readonly IP_BLOCK_SECONDS = 1800
+static readonly IP_FAILURE_THRESHOLD = 20
+```
+
+Esto evita numeros magicos dentro del codigo.
+
+Leer `900` suelto no explica mucho. Leer `ACCOUNT_BLOCK_SECONDS` si explica la intencion.
+
+---
+
+### 4. TTL deslizante
+
+El contador de fallos usa TTL deslizante.
+
+Eso significa que cada intento fallido renueva la ventana de tiempo:
+
+```ts
+await this.store.increment(failKey)
+await this.store.expire(failKey, RedisRateLimitService.ACCOUNT_FAILURE_WINDOW_SECONDS)
+```
+
+Ejemplo con cuenta:
+
+1. Primer fallo: se crea `account_fail:email` con TTL de 10 minutos.
+2. Segundo fallo: sube el contador y se renueva el TTL a otros 10 minutos.
+3. Al quinto fallo: se crea `account_block:email` con TTL de 15 minutos.
+
+---
+
+### 5. Interfaz `RateLimitStore`
+
+Como el proyecto todavia no tiene dependencia real de Redis instalada, se creo una interfaz pequena:
+
+```ts
+export interface RateLimitStore {
+  increment(key: string): Promise<number>
+  expire(key: string, seconds: number): Promise<void>
+  setWithExpiry(key: string, value: string, seconds: number): Promise<void>
+  ttl(key: string): Promise<number>
+  delete(key: string): Promise<void>
+}
+```
+
+Esto permite que `RedisRateLimitService` dependa de operaciones tipo Redis sin acoplarse a una libreria concreta.
+
+Mas adelante se puede crear un adaptador para un cliente Redis real que implemente esta interfaz.
+
+---
+
+### 6. Almacen en memoria para tests y desarrollo
+
+Tambien se creo `InMemoryRateLimitStore`.
+
+Su funcion es simular el comportamiento basico de Redis:
+
+- Incrementar contadores.
+- Guardar claves con expiracion.
+- Calcular TTL restante.
+- Eliminar claves expiradas.
+
+Esto permite probar la logica sin necesitar un servidor Redis funcionando.
+
+Importante: esto no reemplaza Redis en produccion. Es una herramienta de desarrollo y pruebas.
+
+---
+
+## Pruebas anadidas
+
+Archivo:
+
+```text
+src/modules/auth/infrastructure/cache/__tests__/RedisRateLimitService.test.ts
+```
+
+Se anadieron tests para:
+
+- Bloquear una cuenta exactamente al quinto intento fallido.
+- Verificar que antes del quinto intento la cuenta no esta bloqueada.
+- Verificar que la cuenta se desbloquea al pasar el TTL de 15 minutos.
+- Verificar que `resetAccountAttempts` limpia los intentos acumulados.
+- Bloquear una IP exactamente al intento numero 20.
+- Verificar que la IP se desbloquea al pasar el TTL de 30 minutos.
+
+---
+
+## Por que se uso un reloj controlado
+
+Esperar 15 o 30 minutos reales en un test seria inviable.
+
+Por eso el servicio acepta una funcion `now`:
+
+```ts
+constructor(store?: RateLimitStore, now: () => number = Date.now)
+```
+
+En produccion usa `Date.now`.
+
+En tests se usa una variable:
+
+```ts
+let now = 0
+const service = new RedisRateLimitService(undefined, () => now)
+```
+
+Asi el test puede avanzar el tiempo manualmente:
+
+```ts
+now += RedisRateLimitService.ACCOUNT_BLOCK_SECONDS * 1000
+```
+
+Esta tecnica hace que los tests sean rapidos, deterministas y faciles de razonar.
+
+---
+
+## Mecanica de trabajo usada
+
+### 1. Implementar sobre el contrato existente
+
+No se cambio `IRateLimitService`.
+
+Esto es importante porque los futuros casos de uso, como `AuthService.login`, ya podran depender de ese contrato sin saber nada de Redis.
+
+---
+
+### 2. Evitar dependencias prematuras
+
+Como `package.json` no incluye una libreria Redis, no se instalo ninguna nueva dependencia.
+
+La decision fue crear un contrato minimo (`RateLimitStore`) e implementar una version en memoria.
+
+Ventaja:
+
+- El codigo compila y se prueba ya.
+- El diseno sigue preparado para Redis real.
+- No se introduce complejidad antes de necesitarla.
+
+---
+
+### 3. Probar comportamiento, no implementacion interna
+
+Los tests no comprueban directamente el mapa interno del almacen en memoria.
+
+Comprueban el comportamiento visible:
+
+- Si esta bloqueado o no.
+- Cuantos segundos quedan.
+- Si expira correctamente.
+
+Esto hace que los tests sigan siendo utiles aunque en el futuro se cambie la implementacion interna.
+
+---
+
+## Verificacion
+
+Se ejecutaron:
+
+```bash
+npm run typecheck
+npm test -- --runInBand
+```
+
+Resultado:
+
+```text
+3 test suites passed
+34 tests passed
+```
+
+Esto confirma que:
+
+- TypeScript compila correctamente.
+- Las pruebas anteriores siguen funcionando.
+- Las pruebas nuevas del rate limit pasan.
+
+---
+
+## Estado final de la tarea 5
+
+La tarea 5 queda completada:
+
+- [x] Bloqueo de cuenta por intentos fallidos.
+- [x] TTL deslizante de 10 minutos para intentos de cuenta.
+- [x] Bloqueo de cuenta de 15 minutos.
+- [x] `recordFailedAttempt` implementado.
+- [x] `isAccountBlocked` implementado.
+- [x] `resetAccountAttempts` implementado.
+- [x] Bloqueo por IP.
+- [x] TTL deslizante de 5 minutos para intentos por IP.
+- [x] Bloqueo por IP de 30 minutos.
+- [x] `recordIpAttempt` implementado.
+- [x] `isIpBlocked` implementado.
+- [x] Tests de propiedad anadidos.
+- [x] Typecheck correcto.
+- [x] Tests correctos.
+
+---
+
+## Siguiente paso recomendado
+
+La siguiente tarea del plan es:
+
+```text
+6. Punto de control - verificar servicios de infraestructura
+```
+
+Como ya se ejecutaron `typecheck` y tests, esta tarea probablemente consistira en revisar el estado acumulado de las tareas 4 y 5, confirmar que no hay dudas abiertas y dejar preparado el paso hacia `TokenService`.

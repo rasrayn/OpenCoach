@@ -81,25 +81,25 @@ Este plan convierte el diseño técnico en pasos de codificación incrementales 
     - Generar eventos arbitrarios de cada `AuditEventType` y verificar que el registro persistido contiene todos los campos obligatorios
     - **Valida: Requerimientos 4.7, 12.1, 12.2**
 
-- [ ] 5. Implementar `RateLimitService`
-  - [ ] 5.1 Implementar bloqueo de cuenta por intentos fallidos
+- [x] 5. Implementar `RateLimitService`
+  - [x] 5.1 Implementar bloqueo de cuenta por intentos fallidos
     - Clave Redis `account_fail:{email}` con contador y TTL deslizante de 10 minutos
     - Al alcanzar 5 intentos: establecer `account_block:{email}` con TTL = 900 s
     - Implementar `recordFailedAttempt`, `isAccountBlocked` y `resetAccountAttempts`
     - _Requerimientos: 4.5, 4.6_
 
-  - [ ] 5.2 Implementar bloqueo por IP
+  - [x] 5.2 Implementar bloqueo por IP
     - Clave Redis `ip_fail:{ip}` con contador y TTL deslizante de 5 minutos
     - Al alcanzar 20 intentos: establecer `ip_block:{ip}` con TTL = 1800 s
     - Implementar `recordIpAttempt` e `isIpBlocked`
     - _Requerimientos: 12.4_
 
-  - [ ]* 5.3 Escribir prueba de propiedad para bloqueo de cuenta
+  - [x]* 5.3 Escribir prueba de propiedad para bloqueo de cuenta
     - **Propiedad 7: El bloqueo de cuenta por intentos fallidos se activa y respeta correctamente**
     - Simular secuencias de intentos fallidos y verificar umbral de bloqueo, respuesta HTTP 429 con tiempo restante, y restauración tras expiración del TTL
     - **Valida: Requerimientos 4.5, 4.6**
 
-  - [ ]* 5.4 Escribir prueba de propiedad para bloqueo por IP
+  - [x]* 5.4 Escribir prueba de propiedad para bloqueo por IP
     - **Propiedad 23: El bloqueo por IP se activa tras 20 intentos fallidos en 5 minutos**
     - Verificar que exactamente 20 intentos fallidos desde la misma IP activan el bloqueo de 30 minutos con HTTP 429
     - **Valida: Requerimiento 12.4**
