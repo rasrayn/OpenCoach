@@ -735,3 +735,128 @@ Cuando implementemos una tarea nueva, intentaremos dejar al menos:
 - E2E tests solo para flujos completos de alto valor.
 
 Y siempre que sea posible, los tests deben comprobar comportamiento observable, no detalles internos de implementacion.
+
+---
+
+## Correccion de testing: ventana de bloqueo de login
+
+Durante la revision de los tests de `RedisRateLimitService` se detecto un error conceptual importante.
+
+El test original usaba un generador parecido a:
+
+```ts
+fc.integer({ min: 1, max: 599 })
+```
+
+La intencion era probar que los intentos fallidos estaban dentro de una ventana de 10 minutos.
+
+Pero ese generador solo garantizaba que cada separacion individual entre intentos fuese menor que 600 segundos.
+
+Eso no garantiza que todos los intentos esten dentro de la misma ventana total de 10 minutos.
+
+Ejemplo:
+
+```text
+Intento 1 -> segundo 0
+Intento 2 -> segundo 599
+Intento 3 -> segundo 1198
+Intento 4 -> segundo 1797
+Intento 5 -> segundo 2396
+```
+
+Cada salto individual es menor de 10 minutos, pero el conjunto completo no ocurre dentro de los mismos 10 minutos.
+
+---
+
+## Como se corrigio
+
+Se cambio el test para generar directamente offsets de tiempo dentro de la ventana:
+
+```ts
+fc
+  .array(fc.integer({ min: 0, max: RedisRateLimitService.ACCOUNT_FAILURE_WINDOW_SECONDS - 1 }), {
+    minLength: RedisRateLimitService.ACCOUNT_FAILURE_THRESHOLD - 1,
+    maxLength: RedisRateLimitService.ACCOUNT_FAILURE_THRESHOLD - 1,
+  })
+  .map((offsets) => offsets.sort((a, b) => a - b))
+```
+
+Esto garantiza por construccion que todos los intentos generados ocurren entre el segundo 0 y el segundo 599.
+
+La diferencia es importante:
+
+- Antes se controlaba cada intervalo por separado.
+- Ahora se controla la posicion real de cada intento dentro de la ventana.
+
+---
+
+## Test que faltaba
+
+Tambien faltaba comprobar que los intentos antiguos salen de la ventana.
+
+Se anadio este caso:
+
+```text
+00:00 -> intento
+00:01 -> intento
+00:02 -> intento
+00:03 -> intento
+
+pasan mas de 10 minutos
+
+00:14 -> intento
+```
+
+El sistema no debe bloquear la cuenta en ese quinto intento, porque los cuatro intentos anteriores ya expiraron.
+
+Este test es especialmente valioso porque comprueba el comportamiento negativo:
+
+```text
+No debe bloquear si los intentos acumulados ya no pertenecen a la ventana valida.
+```
+
+Esto encaja con la regla que hemos definido: no quedarnos solo con happy paths.
+
+---
+
+## Leccion aprendida
+
+Cuando hacemos tests con generadores, no basta con que los datos parezcan razonables.
+
+Hay que preguntarse:
+
+- Que propiedad exacta quiero demostrar.
+- Que garantiza matematicamente mi generador.
+- Si estoy comprobando el caso que realmente da valor.
+
+En este caso, la propiedad correcta no era:
+
+```text
+Cada separacion entre intentos es menor de 10 minutos.
+```
+
+La propiedad correcta era:
+
+```text
+Los intentos que causan el bloqueo pertenecen a la ventana temporal valida.
+```
+
+Y ademas:
+
+```text
+Los intentos expirados no contribuyen al bloqueo.
+```
+
+Verificacion tras la correccion:
+
+```bash
+npm test -- --runInBand src/modules/auth/infrastructure/cache/__tests__/RedisRateLimitService.test.ts
+npm run typecheck
+```
+
+Resultado:
+
+```text
+RateLimitService tests passed
+Typecheck passed
+```

@@ -25,25 +25,51 @@ describe('RedisRateLimitService - account blocking (Propiedad 7)', () => {
     )
   })
 
-  it('keeps account attempts in a sliding 10-minute window', async () => {
+  it('blocks when 5 account attempts happen inside the same 10-minute window', async () => {
+    const attemptOffsetsInsideWindowArb = fc
+      .array(fc.integer({ min: 0, max: RedisRateLimitService.ACCOUNT_FAILURE_WINDOW_SECONDS - 1 }), {
+        minLength: RedisRateLimitService.ACCOUNT_FAILURE_THRESHOLD - 1,
+        maxLength: RedisRateLimitService.ACCOUNT_FAILURE_THRESHOLD - 1,
+      })
+      .map((offsets) => offsets.sort((a, b) => a - b))
+
     await fc.assert(
-      fc.asyncProperty(fc.emailAddress(), fc.integer({ min: 1, max: 599 }), async (email, secondsBetweenAttempts) => {
+      fc.asyncProperty(fc.emailAddress(), attemptOffsetsInsideWindowArb, async (email, offsets) => {
         let now = 0
         const service = new RedisRateLimitService(undefined, () => now)
 
-        for (let attempt = 1; attempt < RedisRateLimitService.ACCOUNT_FAILURE_THRESHOLD; attempt++) {
+        await service.recordFailedAttempt(email)
+        expect((await service.isAccountBlocked(email)).blocked).toBe(false)
+
+        for (const secondsFromFirstAttempt of offsets.slice(0, -1)) {
+          now = secondsFromFirstAttempt * 1000
           await service.recordFailedAttempt(email)
-          now += secondsBetweenAttempts * 1000
+          expect((await service.isAccountBlocked(email)).blocked).toBe(false)
         }
 
-        const beforeThreshold = await service.isAccountBlocked(email)
-        expect(beforeThreshold.blocked).toBe(false)
-
+        now = offsets[offsets.length - 1] * 1000
         await service.recordFailedAttempt(email)
         expect((await service.isAccountBlocked(email)).blocked).toBe(true)
       }),
       { numRuns: 100 }
     )
+  })
+
+  it('does not count account attempts that expired outside the 10-minute window', async () => {
+    let now = 0
+    const email = 'window-reset@example.com'
+    const service = new RedisRateLimitService(undefined, () => now)
+
+    for (let attempt = 0; attempt < RedisRateLimitService.ACCOUNT_FAILURE_THRESHOLD - 1; attempt++) {
+      await service.recordFailedAttempt(email)
+      now += 60_000
+    }
+
+    now += (RedisRateLimitService.ACCOUNT_FAILURE_WINDOW_SECONDS + 1) * 1000
+
+    await service.recordFailedAttempt(email)
+
+    expect(await service.isAccountBlocked(email)).toEqual({ blocked: false })
   })
 
   it('unblocks the account after the 15-minute block TTL expires', async () => {
