@@ -17,19 +17,19 @@ export class RoleService implements IRoleService {
       throw new UserNotFoundError(requesterId)
     }
 
-    if (!this.canAssignRole(requester.role, newRole)) {
-      throw new RoleAssignmentForbiddenError(requester.role, newRole)
-    }
-
     const targetUser = await this.userRepository.findById(targetUserId)
     if (!targetUser) {
       throw new UserNotFoundError(targetUserId)
     }
 
+    if (!this.canChangeRole(requester.role, targetUser.role, newRole)) {
+      throw new RoleAssignmentForbiddenError(requester.role, newRole, targetUser.role)
+    }
+
     await this.userRepository.update(targetUserId, { role: newRole })
   }
 
-  async validatePermission(userId: string, requiredRole: Role): Promise<boolean> {
+  async assertPermission(userId: string, requiredRole: Role): Promise<void> {
     this.assertRole(requiredRole)
 
     const user = await this.userRepository.findById(userId)
@@ -40,8 +40,6 @@ export class RoleService implements IRoleService {
     if (user.role !== requiredRole) {
       throw new InsufficientRoleError(requiredRole)
     }
-
-    return true
   }
 
   canCreateRole(requesterRole: Role | null, targetRole: Role): boolean {
@@ -67,6 +65,21 @@ export class RoleService implements IRoleService {
         return true
       case Role.COACH:
         return targetRole === Role.ATHLETE
+      case Role.ATHLETE:
+        return false
+    }
+  }
+
+  canChangeRole(requesterRole: Role, currentRole: Role, newRole: Role): boolean {
+    this.assertRole(requesterRole)
+    this.assertRole(currentRole)
+    this.assertRole(newRole)
+
+    switch (requesterRole) {
+      case Role.ADMIN:
+        return true
+      case Role.COACH:
+        return currentRole === Role.ATHLETE && newRole === Role.ATHLETE
       case Role.ATHLETE:
         return false
     }

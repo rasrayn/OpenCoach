@@ -110,7 +110,7 @@ describe('RoleService.canCreateRole - property tests (Propiedad 3)', () => {
 })
 
 describe('RoleService.canAssignRole - property tests', () => {
-  it('centralizes the authenticated role assignment policy', async () => {
+  it('centralizes the authenticated new-role grant policy', async () => {
     await fc.assert(
       fc.asyncProperty(
         fc.constantFrom(...validRoles),
@@ -129,17 +129,43 @@ describe('RoleService.canAssignRole - property tests', () => {
   })
 })
 
-describe('RoleService.assignRole - property tests', () => {
-  it('rejects role assignments outside the centralized policy', async () => {
+describe('RoleService.canChangeRole - property tests', () => {
+  it('centralizes the existing-user role change policy', async () => {
     await fc.assert(
       fc.asyncProperty(
         fc.constantFrom(...validRoles),
         fc.constantFrom(...validRoles),
-        async (requesterRole, newRole) => {
+        fc.constantFrom(...validRoles),
+        async (requesterRole, currentRole, newRole) => {
+          const { service } = createService()
+          const allowed =
+            requesterRole === Role.ADMIN ||
+            (requesterRole === Role.COACH &&
+              currentRole === Role.ATHLETE &&
+              newRole === Role.ATHLETE)
+
+          expect(service.canChangeRole(requesterRole, currentRole, newRole)).toBe(allowed)
+        }
+      ),
+      { numRuns: 100 }
+    )
+  })
+})
+
+describe('RoleService.assignRole - property tests', () => {
+  it('rejects role assignments outside the existing-user change policy', async () => {
+    await fc.assert(
+      fc.asyncProperty(
+        fc.constantFrom(...validRoles),
+        fc.constantFrom(...validRoles),
+        fc.constantFrom(...validRoles),
+        async (requesterRole, currentRole, newRole) => {
           fc.pre(
             !(
               requesterRole === Role.ADMIN ||
-              (requesterRole === Role.COACH && newRole === Role.ATHLETE)
+              (requesterRole === Role.COACH &&
+                currentRole === Role.ATHLETE &&
+                newRole === Role.ATHLETE)
             )
           )
 
@@ -151,7 +177,7 @@ describe('RoleService.assignRole - property tests', () => {
           const target = createUser({
             id: 'target',
             email: 'target@example.com',
-            role: Role.ATHLETE,
+            role: currentRole,
           })
           const { service, repository } = createService([requester, target])
 
@@ -162,24 +188,28 @@ describe('RoleService.assignRole - property tests', () => {
           expect(error).toBeInstanceOf(RoleAssignmentForbiddenError)
           expect(error).toMatchObject({
             requesterRole,
+            currentRole,
             targetRole: newRole,
           })
-          expect(repository.users.get(target.id)?.role).toBe(Role.ATHLETE)
+          expect(repository.users.get(target.id)?.role).toBe(currentRole)
         }
       ),
-      { numRuns: 60 }
+      { numRuns: 100 }
     )
   })
 
-  it('updates the target role when the requester can assign that role', async () => {
+  it('updates the target role when the requester can change that existing user role', async () => {
     await fc.assert(
       fc.asyncProperty(
         fc.constantFrom(...validRoles),
         fc.constantFrom(...validRoles),
-        async (requesterRole, newRole) => {
+        fc.constantFrom(...validRoles),
+        async (requesterRole, currentRole, newRole) => {
           fc.pre(
             requesterRole === Role.ADMIN ||
-              (requesterRole === Role.COACH && newRole === Role.ATHLETE)
+              (requesterRole === Role.COACH &&
+                currentRole === Role.ATHLETE &&
+                newRole === Role.ATHLETE)
           )
 
           const requester = createUser({
@@ -190,7 +220,7 @@ describe('RoleService.assignRole - property tests', () => {
           const target = createUser({
             id: 'target',
             email: 'target@example.com',
-            role: Role.ATHLETE,
+            role: currentRole,
           })
           const { service, repository } = createService([requester, target])
 
@@ -199,8 +229,24 @@ describe('RoleService.assignRole - property tests', () => {
           expect(repository.users.get(target.id)?.role).toBe(newRole)
         }
       ),
-      { numRuns: 40 }
+      { numRuns: 60 }
     )
+  })
+
+  it('does not allow a coach to change an administrator into an athlete', async () => {
+    const coach = createUser({ id: 'coach', email: 'coach@example.com', role: Role.COACH })
+    const admin = createUser({ id: 'admin', email: 'admin@example.com', role: Role.ADMIN })
+    const { service, repository } = createService([coach, admin])
+
+    const error = await captureRejected(() => service.assignRole(admin.id, Role.ATHLETE, coach.id))
+
+    expect(error).toBeInstanceOf(RoleAssignmentForbiddenError)
+    expect(error).toMatchObject({
+      requesterRole: Role.COACH,
+      currentRole: Role.ADMIN,
+      targetRole: Role.ATHLETE,
+    })
+    expect(repository.users.get(admin.id)?.role).toBe(Role.ADMIN)
   })
 })
 
@@ -236,19 +282,19 @@ describe('RoleService role validation - property tests (Propiedad 19)', () => {
   })
 })
 
-describe('RoleService.validatePermission', () => {
-  it('returns true when the user has the required role', async () => {
+describe('RoleService.assertPermission', () => {
+  it('resolves without a value when the user has the required role', async () => {
     const user = createUser({ id: 'coach', email: 'coach@example.com', role: Role.COACH })
     const { service } = createService([user])
 
-    await expect(service.validatePermission(user.id, Role.COACH)).resolves.toBe(true)
+    await expect(service.assertPermission(user.id, Role.COACH)).resolves.toBeUndefined()
   })
 
   it('rejects when the user does not have the required role', async () => {
     const user = createUser({ id: 'athlete', email: 'athlete@example.com', role: Role.ATHLETE })
     const { service } = createService([user])
 
-    const error = await captureRejected(() => service.validatePermission(user.id, Role.ADMIN))
+    const error = await captureRejected(() => service.assertPermission(user.id, Role.ADMIN))
 
     expect(error).toBeInstanceOf(InsufficientRoleError)
     expect(error).toMatchObject({
@@ -259,7 +305,7 @@ describe('RoleService.validatePermission', () => {
   it('rejects when the user does not exist', async () => {
     const { service } = createService()
 
-    const error = await captureRejected(() => service.validatePermission('missing-user', Role.ADMIN))
+    const error = await captureRejected(() => service.assertPermission('missing-user', Role.ADMIN))
 
     expect(error).toBeInstanceOf(UserNotFoundError)
     expect(error).toMatchObject({

@@ -22,8 +22,9 @@ export class InsufficientRoleError extends RoleError {
 export class RoleAssignmentForbiddenError extends RoleError {
   constructor(
     public readonly requesterRole: Role,
-    public readonly targetRole: Role
+    public readonly targetRole: Role,
+    public readonly currentRole: Role
   ) {
-    super(`Role assignment forbidden: ${requesterRole} cannot assign ${targetRole}`)
+    super(`Role assignment forbidden: ${requesterRole} cannot change ${currentRole} to ${targetRole}`)
   }
 }

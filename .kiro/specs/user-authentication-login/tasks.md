@@ -130,9 +130,9 @@ Este plan convierte el diseño técnico en pasos de codificación incrementales 
     - **Valida: Requerimientos 8.1, 8.2, 8.3, 8.4**
 
 - [x] 8. Implementar `RoleService`
-  - [x] 8.1 Implementar `canCreateRole` y `validatePermission`
+  - [x] 8.1 Implementar `canCreateRole` y `assertPermission`
     - `canCreateRole(requesterRole, targetRole)`: ADMIN puede crear cualquier rol; COACH puede crear ATHLETE; ATHLETE no puede crear ninguno; registro público solo COACH
-    - `validatePermission(userId, requiredRole)`: verificar que el usuario tiene el rol requerido
+    - `assertPermission(userId, requiredRole)`: verificar que el usuario tiene el rol requerido o lanzar error de autorización
     - _Requerimientos: 1.1, 1.2, 1.7, 2.7, 3.1, 3.7, 9.3, 9.4, 9.5_
 
   - [x] 8.2 Implementar `assignRole`
@@ -145,8 +145,8 @@ Este plan convierte el diseño técnico en pasos de codificación incrementales 
     - **Valida: Requerimientos 1.1, 1.2, 1.7, 2.7, 3.1, 3.7**
 
   - [x]* 8.4 Escribir prueba de propiedad para modificación de roles
-    - **Propiedad 20: Solo los Administradores pueden modificar roles**
-    - Para cualquier usuario con rol COACH o ATHLETE que intente modificar roles, verificar rechazo con HTTP 403
+    - **Propiedad 20: La modificación de roles respeta el rol actual del usuario objetivo**
+    - Para cualquier combinación de rol solicitante, rol actual del usuario objetivo y nuevo rol, verificar la matriz de permisos; intentos fuera de las reglas deben retornar HTTP 403
     - **Valida: Requerimientos 9.4, 9.5**
 
   - [x]* 8.5 Escribir prueba de propiedad para roles válidos del sistema
