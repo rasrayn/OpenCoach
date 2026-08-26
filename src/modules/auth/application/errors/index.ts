@@ -9,7 +9,10 @@ export {
 export {
   RoleError,
   InvalidRoleError,
-  UserNotFoundError,
   InsufficientRoleError,
   RoleAssignmentForbiddenError,
 } from './RoleErrors'
+export {
+  UserError,
+  UserNotFoundError,
+} from './UserErrors'

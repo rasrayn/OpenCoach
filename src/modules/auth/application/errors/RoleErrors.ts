@@ -1,3 +1,5 @@
+import { Role } from '../../domain/value-objects/Role'
+
 export class RoleError extends Error {
   constructor(message: string) {
     super(message)
@@ -6,25 +8,19 @@ export class RoleError extends Error {
 }
 
 export class InvalidRoleError extends RoleError {
-  constructor(role: string) {
+  constructor(public readonly role: string) {
     super(`Invalid role: ${role}`)
   }
 }
 
-export class UserNotFoundError extends RoleError {
-  constructor(userId: string) {
-    super(`User not found: ${userId}`)
-  }
-}
-
 export class InsufficientRoleError extends RoleError {
-  constructor(requiredRole: string) {
+  constructor(public readonly requiredRole: Role) {
     super(`User does not have required role: ${requiredRole}`)
   }
 }
 
 export class RoleAssignmentForbiddenError extends RoleError {
-  constructor() {
+  constructor(public readonly requesterRole: Role) {
     super('Only administrators can assign roles')
   }
 }

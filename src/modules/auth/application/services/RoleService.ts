@@ -18,7 +18,7 @@ export class RoleService implements IRoleService {
     }
 
     if (requester.role !== Role.ADMIN) {
-      throw new RoleAssignmentForbiddenError()
+      throw new RoleAssignmentForbiddenError(requester.role)
     }
 
     const targetUser = await this.userRepository.findById(targetUserId)

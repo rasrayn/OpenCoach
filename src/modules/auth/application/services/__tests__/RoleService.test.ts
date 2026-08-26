@@ -129,6 +129,9 @@ describe('RoleService.assignRole - property tests (Propiedad 20)', () => {
           await expect(service.assignRole(target.id, newRole, requester.id)).rejects.toBeInstanceOf(
             RoleAssignmentForbiddenError
           )
+          await expect(service.assignRole(target.id, newRole, requester.id)).rejects.toMatchObject({
+            requesterRole,
+          })
           expect(repository.users.get(target.id)?.role).toBe(Role.ATHLETE)
         }
       ),
@@ -165,9 +168,15 @@ describe('RoleService role validation - property tests (Propiedad 19)', () => {
         const { service } = createService([admin, target])
 
         expect(() => service.canCreateRole(Role.ADMIN, invalidRole as Role)).toThrow(InvalidRoleError)
+        expect(captureError(() => service.canCreateRole(Role.ADMIN, invalidRole as Role))).toMatchObject({
+          role: invalidRole,
+        })
         await expect(service.assignRole(target.id, invalidRole as Role, admin.id)).rejects.toBeInstanceOf(
           InvalidRoleError
         )
+        await expect(service.assignRole(target.id, invalidRole as Role, admin.id)).rejects.toMatchObject({
+          role: invalidRole,
+        })
       }),
       { numRuns: 80 }
     )
@@ -189,6 +198,9 @@ describe('RoleService.validatePermission', () => {
     await expect(service.validatePermission(user.id, Role.ADMIN)).rejects.toBeInstanceOf(
       InsufficientRoleError
     )
+    await expect(service.validatePermission(user.id, Role.ADMIN)).rejects.toMatchObject({
+      requiredRole: Role.ADMIN,
+    })
   })
 
   it('rejects when the user does not exist', async () => {
@@ -197,5 +209,17 @@ describe('RoleService.validatePermission', () => {
     await expect(service.validatePermission('missing-user', Role.ADMIN)).rejects.toBeInstanceOf(
       UserNotFoundError
     )
+    await expect(service.validatePermission('missing-user', Role.ADMIN)).rejects.toMatchObject({
+      userId: 'missing-user',
+    })
   })
 })
+
+function captureError(action: () => unknown): unknown {
+  try {
+    action()
+    return null
+  } catch (error) {
+    return error
+  }
+}
