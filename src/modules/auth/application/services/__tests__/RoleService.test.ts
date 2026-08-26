@@ -56,7 +56,10 @@ class InMemoryUserRepository implements IUserRepository {
     return saved
   }
 
-  async update(id: string, updates: Partial<Omit<User, 'id' | 'createdAt'>>): Promise<User> {
+  async update(
+    id: string,
+    updates: Partial<Omit<User, 'id' | 'createdAt' | 'updatedAt'>>
+  ): Promise<User> {
     const current = this.users.get(id)
     if (!current) {
       throw new Error(`User not found: ${id}`)
@@ -152,10 +155,12 @@ describe('RoleService.assignRole - property tests', () => {
           })
           const { service, repository } = createService([requester, target])
 
-          await expect(service.assignRole(target.id, newRole, requester.id)).rejects.toBeInstanceOf(
-            RoleAssignmentForbiddenError
+          const error = await captureRejected(() =>
+            service.assignRole(target.id, newRole, requester.id)
           )
-          await expect(service.assignRole(target.id, newRole, requester.id)).rejects.toMatchObject({
+
+          expect(error).toBeInstanceOf(RoleAssignmentForbiddenError)
+          expect(error).toMatchObject({
             requesterRole,
             targetRole: newRole,
           })
@@ -211,14 +216,18 @@ describe('RoleService role validation - property tests (Propiedad 19)', () => {
         const target = createUser({ id: 'target', email: 'target@example.com', role: Role.ATHLETE })
         const { service } = createService([admin, target])
 
-        expect(() => service.canCreateRole(Role.ADMIN, invalidRole as Role)).toThrow(InvalidRoleError)
-        expect(captureError(() => service.canCreateRole(Role.ADMIN, invalidRole as Role))).toMatchObject({
+        const syncError = captureError(() => service.canCreateRole(Role.ADMIN, invalidRole as Role))
+
+        expect(syncError).toBeInstanceOf(InvalidRoleError)
+        expect(syncError).toMatchObject({
           role: invalidRole,
         })
-        await expect(service.assignRole(target.id, invalidRole as Role, admin.id)).rejects.toBeInstanceOf(
-          InvalidRoleError
+        const error = await captureRejected(() =>
+          service.assignRole(target.id, invalidRole as Role, admin.id)
         )
-        await expect(service.assignRole(target.id, invalidRole as Role, admin.id)).rejects.toMatchObject({
+
+        expect(error).toBeInstanceOf(InvalidRoleError)
+        expect(error).toMatchObject({
           role: invalidRole,
         })
       }),
@@ -239,10 +248,10 @@ describe('RoleService.validatePermission', () => {
     const user = createUser({ id: 'athlete', email: 'athlete@example.com', role: Role.ATHLETE })
     const { service } = createService([user])
 
-    await expect(service.validatePermission(user.id, Role.ADMIN)).rejects.toBeInstanceOf(
-      InsufficientRoleError
-    )
-    await expect(service.validatePermission(user.id, Role.ADMIN)).rejects.toMatchObject({
+    const error = await captureRejected(() => service.validatePermission(user.id, Role.ADMIN))
+
+    expect(error).toBeInstanceOf(InsufficientRoleError)
+    expect(error).toMatchObject({
       requiredRole: Role.ADMIN,
     })
   })
@@ -250,10 +259,10 @@ describe('RoleService.validatePermission', () => {
   it('rejects when the user does not exist', async () => {
     const { service } = createService()
 
-    await expect(service.validatePermission('missing-user', Role.ADMIN)).rejects.toBeInstanceOf(
-      UserNotFoundError
-    )
-    await expect(service.validatePermission('missing-user', Role.ADMIN)).rejects.toMatchObject({
+    const error = await captureRejected(() => service.validatePermission('missing-user', Role.ADMIN))
+
+    expect(error).toBeInstanceOf(UserNotFoundError)
+    expect(error).toMatchObject({
       userId: 'missing-user',
     })
   })
@@ -262,6 +271,15 @@ describe('RoleService.validatePermission', () => {
 function captureError(action: () => unknown): unknown {
   try {
     action()
+    return null
+  } catch (error) {
+    return error
+  }
+}
+
+async function captureRejected(action: () => Promise<unknown>): Promise<unknown> {
+  try {
+    await action()
     return null
   } catch (error) {
     return error

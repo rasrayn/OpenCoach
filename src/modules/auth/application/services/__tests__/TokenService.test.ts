@@ -54,7 +54,10 @@ class InMemoryUserRepository implements IUserRepository {
     return this.user
   }
 
-  async update(id: string, updates: Partial<Omit<User, 'id' | 'createdAt'>>): Promise<User> {
+  async update(
+    id: string,
+    updates: Partial<Omit<User, 'id' | 'createdAt' | 'updatedAt'>>
+  ): Promise<User> {
     if (!this.user || this.user.id !== id) throw new Error('User not found')
     this.user = { ...this.user, ...updates, updatedAt: now }
     return this.user
