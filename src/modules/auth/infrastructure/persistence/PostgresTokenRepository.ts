@@ -1,4 +1,8 @@
-import { ITokenRepository } from '../../domain/repositories/ITokenRepository'
+import {
+  ITokenRepository,
+  RefreshTokenRotationInput,
+  RefreshTokenRotationResult,
+} from '../../domain/repositories/ITokenRepository'
 import { RefreshToken, DeviceInfo } from '../../domain/entities/RefreshToken'
 import { EmailVerificationToken } from '../../domain/entities/EmailVerificationToken'
 import { PasswordResetToken } from '../../domain/entities/PasswordResetToken'
@@ -16,6 +20,29 @@ function rowToRefreshToken(row: Record<string, unknown>): RefreshToken {
     issuedAt: new Date(row['issued_at'] as string),
     expiresAt: row['expires_at'] != null ? new Date(row['expires_at'] as string) : null,
     revokedAt: row['revoked_at'] != null ? new Date(row['revoked_at'] as string) : null,
+  }
+}
+
+function prefixedRowToRefreshToken(
+  row: Record<string, unknown>,
+  prefix: 'consumed' | 'rotated'
+): RefreshToken {
+  return {
+    id: row[`${prefix}_id`] as string,
+    userId: row[`${prefix}_user_id`] as string,
+    tokenHash: row[`${prefix}_token_hash`] as string,
+    deviceId: row[`${prefix}_device_id`] as string,
+    deviceInfo: (row[`${prefix}_device_info`] as DeviceInfo | null) ?? null,
+    role: row[`${prefix}_role`] as Role,
+    issuedAt: new Date(row[`${prefix}_issued_at`] as string),
+    expiresAt:
+      row[`${prefix}_expires_at`] != null
+        ? new Date(row[`${prefix}_expires_at`] as string)
+        : null,
+    revokedAt:
+      row[`${prefix}_revoked_at`] != null
+        ? new Date(row[`${prefix}_revoked_at`] as string)
+        : null,
   }
 }
 
@@ -86,18 +113,70 @@ export class PostgresTokenRepository implements ITokenRepository {
     return rowToRefreshToken(result.rows[0])
   }
 
-  async consumeRefreshToken(tokenId: string, tokenHash: string): Promise<boolean> {
-    const result = await this.pool.query(
-      `UPDATE refresh_tokens
-       SET revoked_at = NOW()
-       WHERE id = $1
-         AND token_hash = $2
-         AND revoked_at IS NULL
-         AND (expires_at IS NULL OR expires_at > NOW())`,
-      [tokenId, tokenHash]
+  async rotateRefreshToken(
+    input: RefreshTokenRotationInput
+  ): Promise<RefreshTokenRotationResult | null> {
+    const { newToken } = input
+    const result = await this.pool.query<Record<string, unknown>>(
+      `WITH consumed AS (
+         UPDATE refresh_tokens
+         SET revoked_at = NOW()
+         WHERE id = $1
+           AND token_hash = $2
+           AND revoked_at IS NULL
+           AND (expires_at IS NULL OR expires_at > NOW())
+         RETURNING id, user_id, token_hash, device_id, device_info, role,
+                   issued_at, expires_at, revoked_at
+       ), rotated AS (
+         INSERT INTO refresh_tokens
+           (user_id, token_hash, device_id, device_info, role, expires_at, revoked_at)
+         SELECT $3, $4, $5, $6, $7, $8, $9
+         FROM consumed
+         RETURNING id, user_id, token_hash, device_id, device_info, role,
+                   issued_at, expires_at, revoked_at
+       )
+       SELECT
+         consumed.id AS consumed_id,
+         consumed.user_id AS consumed_user_id,
+         consumed.token_hash AS consumed_token_hash,
+         consumed.device_id AS consumed_device_id,
+         consumed.device_info AS consumed_device_info,
+         consumed.role AS consumed_role,
+         consumed.issued_at AS consumed_issued_at,
+         consumed.expires_at AS consumed_expires_at,
+         consumed.revoked_at AS consumed_revoked_at,
+         rotated.id AS rotated_id,
+         rotated.user_id AS rotated_user_id,
+         rotated.token_hash AS rotated_token_hash,
+         rotated.device_id AS rotated_device_id,
+         rotated.device_info AS rotated_device_info,
+         rotated.role AS rotated_role,
+         rotated.issued_at AS rotated_issued_at,
+         rotated.expires_at AS rotated_expires_at,
+         rotated.revoked_at AS rotated_revoked_at
+       FROM consumed
+       CROSS JOIN rotated`,
+      [
+        input.consumedTokenId,
+        input.consumedTokenHash,
+        newToken.userId,
+        newToken.tokenHash,
+        newToken.deviceId,
+        newToken.deviceInfo ? JSON.stringify(newToken.deviceInfo) : null,
+        newToken.role,
+        newToken.expiresAt ?? null,
+        newToken.revokedAt ?? null,
+      ]
     )
 
-    return result.rowCount === 1
+    if (result.rows.length === 0) {
+      return null
+    }
+
+    return {
+      consumedToken: prefixedRowToRefreshToken(result.rows[0], 'consumed'),
+      rotatedToken: prefixedRowToRefreshToken(result.rows[0], 'rotated'),
+    }
   }
 
   async revokeRefreshToken(tokenId: string): Promise<void> {

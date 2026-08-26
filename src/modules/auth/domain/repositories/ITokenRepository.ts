@@ -2,6 +2,17 @@ import { RefreshToken } from '../entities/RefreshToken'
 import { EmailVerificationToken } from '../entities/EmailVerificationToken'
 import { PasswordResetToken } from '../entities/PasswordResetToken'
 
+export interface RefreshTokenRotationInput {
+  consumedTokenId: string
+  consumedTokenHash: string
+  newToken: Omit<RefreshToken, 'id' | 'issuedAt'>
+}
+
+export interface RefreshTokenRotationResult {
+  consumedToken: RefreshToken
+  rotatedToken: RefreshToken
+}
+
 /**
  * ITokenRepository - pure domain interface for all token types.
  * Implementations live in the infrastructure layer.
@@ -15,7 +26,9 @@ export interface ITokenRepository {
 
   findRefreshTokenByHash(tokenHash: string): Promise<RefreshToken | null>
 
-  consumeRefreshToken(tokenId: string, tokenHash: string): Promise<boolean>
+  rotateRefreshToken(
+    input: RefreshTokenRotationInput
+  ): Promise<RefreshTokenRotationResult | null>
 
   revokeRefreshToken(tokenId: string): Promise<void>
 

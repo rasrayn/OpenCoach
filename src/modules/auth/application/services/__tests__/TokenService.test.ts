@@ -8,6 +8,13 @@ import { IUserRepository } from '../../../domain/repositories/IUserRepository'
 import { ITokenSigner } from '../../../domain/services/ITokenSigner'
 import { Role } from '../../../domain/value-objects/Role'
 import { TokenPayload } from '../../dtos'
+import {
+  RefreshTokenAlreadyConsumedError,
+  RefreshTokenExpiredError,
+  RefreshTokenNotFoundError,
+  RefreshTokenRevokedError,
+  RefreshTokenUserNotFoundError,
+} from '../../errors'
 import { TokenService, hashToken } from '../TokenService'
 
 const now = new Date('2026-08-25T10:00:00.000Z')
@@ -61,7 +68,7 @@ class InMemoryUserRepository implements IUserRepository {
 class InMemoryTokenRepository implements ITokenRepository {
   readonly refreshTokens: RefreshToken[] = []
   readonly revokedTokenIds: string[] = []
-  forceNextConsumeResult: boolean | null = null
+  forceNextRotateResult: boolean | null = null
   private nextId = 1
 
   async saveRefreshToken(token: Omit<RefreshToken, 'id' | 'issuedAt'>): Promise<RefreshToken> {
@@ -79,23 +86,38 @@ class InMemoryTokenRepository implements ITokenRepository {
     return this.refreshTokens.find((token) => token.tokenHash === tokenHash) ?? null
   }
 
-  async consumeRefreshToken(tokenId: string, tokenHash: string): Promise<boolean> {
-    if (this.forceNextConsumeResult !== null) {
-      const result = this.forceNextConsumeResult
-      this.forceNextConsumeResult = null
-      return result
+  async rotateRefreshToken(input: {
+    consumedTokenId: string
+    consumedTokenHash: string
+    newToken: Omit<RefreshToken, 'id' | 'issuedAt'>
+  }): Promise<{ consumedToken: RefreshToken; rotatedToken: RefreshToken } | null> {
+    if (this.forceNextRotateResult !== null) {
+      const result = this.forceNextRotateResult
+      this.forceNextRotateResult = null
+      return result ? this.rotate(input) : null
     }
 
+    return this.rotate(input)
+  }
+
+  private async rotate(input: {
+    consumedTokenId: string
+    consumedTokenHash: string
+    newToken: Omit<RefreshToken, 'id' | 'issuedAt'>
+  }): Promise<{ consumedToken: RefreshToken; rotatedToken: RefreshToken } | null> {
     const token = this.refreshTokens.find(
-      (current) => current.id === tokenId && current.tokenHash === tokenHash
+      (current) =>
+        current.id === input.consumedTokenId && current.tokenHash === input.consumedTokenHash
     )
     if (!token || token.revokedAt !== null || (token.expiresAt !== null && token.expiresAt <= now)) {
-      return false
+      return null
     }
 
     token.revokedAt = now
     this.revokedTokenIds.push(token.id)
-    return true
+    const rotatedToken = await this.saveRefreshToken(input.newToken)
+
+    return { consumedToken: token, rotatedToken }
   }
 
   async revokeRefreshToken(tokenId: string): Promise<void> {
@@ -251,8 +273,8 @@ describe('TokenService - refresh rotation (Propiedad 16)', () => {
 
     await service.verifyAndConsumeRefreshToken(issued.plainToken)
 
-    await expect(service.verifyAndConsumeRefreshToken(issued.plainToken)).rejects.toThrow(
-      'Refresh token revoked'
+    await expect(service.verifyAndConsumeRefreshToken(issued.plainToken)).rejects.toBeInstanceOf(
+      RefreshTokenRevokedError
     )
     expect(repository.refreshTokens).toHaveLength(2)
   })
@@ -260,10 +282,10 @@ describe('TokenService - refresh rotation (Propiedad 16)', () => {
   it('does not rotate when the atomic consume operation loses the race', async () => {
     const { service, repository } = createService(undefined, ['race-token', 'should-not-rotate'])
     const issued = await service.issueRefreshToken('user-1', 'device-1', Role.COACH)
-    repository.forceNextConsumeResult = false
+    repository.forceNextRotateResult = false
 
-    await expect(service.verifyAndConsumeRefreshToken(issued.plainToken)).rejects.toThrow(
-      'Refresh token already consumed'
+    await expect(service.verifyAndConsumeRefreshToken(issued.plainToken)).rejects.toBeInstanceOf(
+      RefreshTokenAlreadyConsumedError
     )
     expect(repository.refreshTokens).toHaveLength(1)
   })
@@ -273,8 +295,8 @@ describe('TokenService - refresh rotation (Propiedad 16)', () => {
     const issued = await service.issueRefreshToken('user-1', 'device-1', Role.ADMIN)
     await repository.revokeRefreshToken(issued.record.id)
 
-    await expect(service.verifyAndConsumeRefreshToken(issued.plainToken)).rejects.toThrow(
-      'Refresh token revoked'
+    await expect(service.verifyAndConsumeRefreshToken(issued.plainToken)).rejects.toBeInstanceOf(
+      RefreshTokenRevokedError
     )
     expect(repository.refreshTokens).toHaveLength(1)
   })
@@ -285,8 +307,8 @@ describe('TokenService - refresh rotation (Propiedad 16)', () => {
     const savedToken = repository.refreshTokens[0]
     savedToken.expiresAt = new Date(now.getTime() - 1)
 
-    await expect(service.verifyAndConsumeRefreshToken('expired-token')).rejects.toThrow(
-      'Refresh token expired'
+    await expect(service.verifyAndConsumeRefreshToken('expired-token')).rejects.toBeInstanceOf(
+      RefreshTokenExpiredError
     )
     expect(repository.revokedTokenIds).toEqual([])
     expect(repository.refreshTokens).toHaveLength(1)
@@ -307,16 +329,16 @@ describe('TokenService - refresh rotation (Propiedad 16)', () => {
       new InMemoryUserRepository(null)
     ).service
 
-    await expect(missingUserService.verifyAndConsumeRefreshToken('orphan-token')).rejects.toThrow(
-      'Refresh token user not found'
+    await expect(missingUserService.verifyAndConsumeRefreshToken('orphan-token')).rejects.toBeInstanceOf(
+      RefreshTokenUserNotFoundError
     )
   })
 
   it('rejects unknown refresh tokens', async () => {
     const { service } = createService()
 
-    await expect(service.verifyAndConsumeRefreshToken('missing-token')).rejects.toThrow(
-      'Refresh token not found'
+    await expect(service.verifyAndConsumeRefreshToken('missing-token')).rejects.toBeInstanceOf(
+      RefreshTokenNotFoundError
     )
   })
 })

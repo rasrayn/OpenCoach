@@ -6,6 +6,13 @@ import { ITokenSigner } from '../../domain/services/ITokenSigner'
 import { Role } from '../../domain/value-objects/Role'
 import { TokenPayload } from '../dtos'
 import {
+  RefreshTokenAlreadyConsumedError,
+  RefreshTokenExpiredError,
+  RefreshTokenNotFoundError,
+  RefreshTokenRevokedError,
+  RefreshTokenUserNotFoundError,
+} from '../errors'
+import {
   ConsumedRefreshToken,
   IssuedRefreshToken,
   ITokenService,
@@ -69,35 +76,49 @@ export class TokenService implements ITokenService {
     const tokenHash = hashToken(token)
     const record = await this.tokenRepository.findRefreshTokenByHash(tokenHash)
     if (!record) {
-      throw new Error('Refresh token not found')
+      throw new RefreshTokenNotFoundError()
     }
 
     if (record.revokedAt) {
-      throw new Error('Refresh token revoked')
+      throw new RefreshTokenRevokedError()
     }
 
     if (this.isRefreshTokenExpired(record)) {
-      throw new Error('Refresh token expired')
+      throw new RefreshTokenExpiredError()
     }
 
     const currentUser = await this.userRepository.findById(record.userId)
     if (!currentUser) {
-      throw new Error('Refresh token user not found')
+      throw new RefreshTokenUserNotFoundError()
     }
 
-    const consumed = await this.tokenRepository.consumeRefreshToken(record.id, tokenHash)
-    if (!consumed) {
-      throw new Error('Refresh token already consumed')
+    const plainToken = this.generateOpaqueToken()
+    const rotated = await this.tokenRepository.rotateRefreshToken({
+      consumedTokenId: record.id,
+      consumedTokenHash: tokenHash,
+      newToken: {
+        userId: record.userId,
+        tokenHash: hashToken(plainToken),
+        deviceId: record.deviceId,
+        deviceInfo: record.deviceInfo,
+        role: currentUser.role,
+        expiresAt: this.calculateRefreshTokenExpiry(currentUser.role),
+        revokedAt: null,
+      },
+    })
+
+    if (!rotated) {
+      throw new RefreshTokenAlreadyConsumedError()
     }
 
-    const rotatedToken = await this.issueRefreshToken(
-      record.userId,
-      record.deviceId,
-      currentUser.role,
-      record.deviceInfo ?? undefined
-    )
-
-    return { consumedToken: record, rotatedToken, currentUser }
+    return {
+      consumedToken: rotated.consumedToken,
+      rotatedToken: {
+        plainToken,
+        record: rotated.rotatedToken,
+      },
+      currentUser,
+    }
   }
 
   async revokeRefreshToken(tokenId: string): Promise<void> {

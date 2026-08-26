@@ -1504,3 +1504,89 @@ Se anadieron pruebas para comprobar que:
 - si el consumo atomico pierde la carrera, no se emite un token nuevo;
 - la rotacion usa el rol actual del usuario, no el rol historico guardado en el refresh token;
 - si el usuario ya no existe, el refresh token se rechaza.
+
+---
+
+## Correccion final de rotacion: operacion atomica completa
+
+Despues de la correccion anterior quedaba una mejora importante: aunque el consumo del token viejo era atomico, la rotacion completa seguia ocurriendo en dos pasos desde `TokenService`:
+
+```text
+1. consumir token viejo
+2. insertar token nuevo
+```
+
+Eso evitaba que dos peticiones ganasen a la vez, pero dejaba una inconsistencia posible:
+
+```text
+A se consume correctamente
+B falla al insertarse
+```
+
+Resultado: el usuario podia quedarse sin refresh token valido.
+
+Para corregirlo, el contrato del repositorio cambio de:
+
+```ts
+consumeRefreshToken(...)
+```
+
+a:
+
+```ts
+rotateRefreshToken(...)
+```
+
+La diferencia conceptual es importante:
+
+- `consumeRefreshToken` solo representaba media operacion.
+- `rotateRefreshToken` representa la operacion completa: consumir viejo + crear nuevo.
+
+En PostgreSQL se implemento con una sola sentencia usando CTE:
+
+```sql
+WITH consumed AS (
+  UPDATE refresh_tokens
+  SET revoked_at = NOW()
+  WHERE id = $1
+    AND token_hash = $2
+    AND revoked_at IS NULL
+    AND (expires_at IS NULL OR expires_at > NOW())
+  RETURNING ...
+), rotated AS (
+  INSERT INTO refresh_tokens (...)
+  SELECT ...
+  FROM consumed
+  RETURNING ...
+)
+SELECT ...
+FROM consumed
+CROSS JOIN rotated
+```
+
+Esto tiene una propiedad muy buena: si `consumed` no actualiza ninguna fila, `rotated` no inserta nada. Y al ser una sola sentencia SQL, PostgreSQL la ejecuta de forma atomica.
+
+Asi cubrimos las dos garantias:
+
+1. Solo una peticion puede consumir el refresh token viejo.
+2. No existe un estado intermedio donde el token viejo queda consumido pero el nuevo no se crea.
+
+Tambien se introdujeron errores tipados:
+
+```ts
+RefreshTokenNotFoundError
+RefreshTokenRevokedError
+RefreshTokenExpiredError
+RefreshTokenAlreadyConsumedError
+RefreshTokenUserNotFoundError
+```
+
+Esto prepara mejor los futuros controladores HTTP. En vez de depender de comparar strings, podran hacer:
+
+```ts
+if (error instanceof RefreshTokenExpiredError) {
+  // responder 401 con mensaje adecuado
+}
+```
+
+Los tests se actualizaron para verificar tanto la rotacion atomica del repositorio como las clases de error lanzadas por `TokenService`.
