@@ -222,8 +222,10 @@ Responsable de asignar, validar y gestionar roles.
 ```typescript
 interface RoleService {
   assignRole(targetUserId: string, newRole: Role, requesterId: string): Promise<void>
-  validatePermission(userId: string, requiredRole: Role): Promise<boolean>
-  canCreateRole(requesterRole: Role, targetRole: Role): boolean
+  assertPermission(userId: string, requiredRole: Role): Promise<void>
+  canAssignRole(requesterRole: Role, targetRole: Role): boolean
+  canChangeRole(requesterRole: Role, currentRole: Role, newRole: Role): boolean
+  canCreateRole(requesterRole: Role | null, targetRole: Role): boolean
 }
 ```
 
@@ -829,9 +831,9 @@ El access token debe expirar en 15 minutos independientemente del rol.
 
 ---
 
-### Propiedad 20: Solo los Administradores pueden modificar roles
+### Propiedad 20: La modificacion de roles respeta el rol actual del usuario objetivo
 
-*Para cualquier* usuario con rol COACH o ATHLETE que intente modificar el rol de cualquier otro usuario, la operación debe ser rechazada con HTTP 403.
+*Para cualquier* combinacion de rol solicitante, rol actual del usuario objetivo y nuevo rol solicitado, el sistema debe permitir la operacion si y solo si se cumple la politica de gestion de roles: ADMIN puede modificar cualquier usuario; COACH solo puede mantener/gestionar usuarios ATHLETE como ATHLETE; ATHLETE no puede modificar roles. Cualquier intento fuera de esa matriz debe rechazarse con HTTP 403.
 
 **Valida: Requerimientos 9.4, 9.5**
 

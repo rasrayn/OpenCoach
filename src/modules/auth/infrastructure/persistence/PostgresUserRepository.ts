@@ -82,7 +82,7 @@ export class PostgresUserRepository implements IUserRepository {
 
   async update(
     id: string,
-    updates: Partial<Omit<User, 'id' | 'createdAt'>>
+    updates: Partial<Omit<User, 'id' | 'createdAt' | 'updatedAt'>>
   ): Promise<User> {
     // Build the SET clause dynamically from provided fields only.
     const columnMap: Record<string, string> = {
@@ -92,7 +92,6 @@ export class PostgresUserRepository implements IUserRepository {
       emailVerified: 'email_verified',
       isFirstAccess: 'is_first_access',
       createdBy: 'created_by',
-      updatedAt: 'updated_at',
     }
 
     const setClauses: string[] = []
@@ -115,10 +114,7 @@ export class PostgresUserRepository implements IUserRepository {
       return existing
     }
 
-    // Always refresh updated_at unless explicitly provided
-    if (!('updatedAt' in updates)) {
-      setClauses.push(`updated_at = NOW()`)
-    }
+    setClauses.push(`updated_at = NOW()`)
 
     values.push(id)
     const result = await this.pool.query<Record<string, unknown>>(

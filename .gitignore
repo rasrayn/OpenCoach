@@ -16,3 +16,5 @@ Thumbs.db
 # Local JWT key material
 keys/
 *.pem
+
+MODIFICACION.md

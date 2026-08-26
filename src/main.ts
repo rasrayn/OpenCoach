@@ -21,6 +21,7 @@ import { NodemailerEmailService } from './modules/auth/infrastructure/email/Node
 import { BcryptPasswordHasher } from './modules/auth/infrastructure/security/BcryptPasswordHasher'
 import { JwtTokenService } from './modules/auth/infrastructure/security/JwtTokenService'
 import { AuditService } from './modules/auth/application/services/AuditService'
+import { RoleService } from './modules/auth/application/services/RoleService'
 import { TokenService } from './modules/auth/application/services/TokenService'
 
 async function bootstrap(): Promise<void> {
@@ -43,6 +44,7 @@ async function bootstrap(): Promise<void> {
   const _tokenRepository = new PostgresTokenRepository(dbPool)
   const _auditRepository = new PostgresAuditRepository(dbPool)
   const _auditService = new AuditService(_auditRepository)
+  const _roleService = new RoleService(_userRepository)
   const _rateLimitService =
     config.nodeEnv === 'production'
       ? (() => {
