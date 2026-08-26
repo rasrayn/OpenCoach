@@ -1590,3 +1590,337 @@ if (error instanceof RefreshTokenExpiredError) {
 ```
 
 Los tests se actualizaron para verificar tanto la rotacion atomica del repositorio como las clases de error lanzadas por `TokenService`.
+
+---
+
+## Modificacion 3: Implementacion de `RoleService` (Tarea 8)
+
+### Contexto
+
+La tarea 8 del plan pide construir el componente encargado de las reglas de roles del sistema:
+
+- decidir que rol puede crear a otro;
+- validar si un usuario tiene el rol requerido para una accion;
+- permitir el cambio de rol de un usuario solo cuando quien lo solicita sea Administrador;
+- cubrir esas reglas con pruebas de propiedad.
+
+Esta parte aterriza varios requerimientos importantes del sistema:
+
+- 1.1 y 1.2: un Administrador puede crear cuentas `ADMIN` y `COACH`;
+- 1.7: un no-Administrador no puede crear cuentas `ADMIN`;
+- 2.7: el registro publico solo puede crear `COACH`;
+- 3.1 y 3.7: un `COACH` puede crear `ATHLETE`, pero no otros roles;
+- 9.1: solo existen `ADMIN`, `COACH` y `ATHLETE`;
+- 9.3, 9.4 y 9.5: solo `ADMIN` puede modificar roles;
+- 9.6: cuando un usuario no tiene permisos, el sistema debe poder rechazarlo.
+
+En otras palabras, `RoleService` no es un detalle cosmetico: es la pieza que concentra la jerarquia real del sistema.
+
+---
+
+### Que se ha creado
+
+### 1. Puerto `IRoleService`
+
+Archivo:
+
+```text
+src/modules/auth/application/ports/IRoleService.ts
+```
+
+Se definio el contrato de aplicacion para el gestor de roles:
+
+```ts
+export interface IRoleService {
+  assignRole(targetUserId: string, newRole: Role, requesterId: string): Promise<void>
+  validatePermission(userId: string, requiredRole: Role): Promise<boolean>
+  canCreateRole(requesterRole: Role | null, targetRole: Role): boolean
+}
+```
+
+La idea importante aqui es separar:
+
+- el **contrato** que necesita la aplicacion;
+- de la **implementacion concreta** de las reglas.
+
+Esto ayuda a mantener la arquitectura limpia y hace posible sustituir o testear el servicio con dobles en memoria si alguna vez hiciera falta.
+
+---
+
+### 2. Servicio `RoleService`
+
+Archivo:
+
+```text
+src/modules/auth/application/services/RoleService.ts
+```
+
+Se implemento el servicio real con tres responsabilidades.
+
+#### `canCreateRole(requesterRole, targetRole)`
+
+Codifica la tabla de permisos de creacion:
+
+- `ADMIN` puede crear `ADMIN` y `COACH`;
+- `COACH` puede crear `ATHLETE`;
+- `ATHLETE` no puede crear ninguno;
+- `null` representa registro publico y solo puede crear `COACH`.
+
+Ese `null` merece una explicacion: se uso para representar que no existe usuario autenticado que haga la solicitud, que es justo el caso del registro publico. Asi evitamos inventar un rol falso como `"PUBLIC"` que no pertenece al dominio real.
+
+#### `validatePermission(userId, requiredRole)`
+
+Busca el usuario en repositorio y comprueba si tiene exactamente el rol requerido.
+
+Si el usuario no existe, falla.
+Si existe pero no tiene el rol correcto, falla.
+Si lo tiene, devuelve `true`.
+
+Esto esta pensado para que, en tareas futuras, controladores, middlewares o casos de uso puedan depender de una comprobacion centralizada en vez de repetir comparaciones de strings por todo el codigo.
+
+#### `assignRole(targetUserId, newRole, requesterId)`
+
+Hace tres comprobaciones en orden:
+
+1. el nuevo rol debe ser valido;
+2. quien solicita el cambio debe existir y ser `ADMIN`;
+3. el usuario destino debe existir.
+
+Solo si todo eso se cumple se actualiza el rol del usuario en `IUserRepository.update(...)`.
+
+Esto cubre una decision importante del diseño: el cambio de rol no vive en el controlador ni se deja “implícito” en el repositorio. Vive en aplicacion porque es una **regla de negocio**, no una simple operacion tecnica.
+
+---
+
+### 3. Validacion explicita de roles con `isValidRole`
+
+`RoleService` reutiliza el value object ya existente:
+
+```ts
+isValidRole(value: string): value is Role
+```
+
+Esto evita aceptar silenciosamente strings arbitrarios como:
+
+```text
+ROOT
+SUPERADMIN
+PUBLIC
+moderator
+```
+
+Ese detalle importa mucho. Si el sistema permitiera valores fuera del enum real:
+
+- se romperia el requerimiento 9.1;
+- aparecerian estados imposibles en base de datos;
+- los permisos dejarian de ser predecibles;
+- otros servicios podrian tomar decisiones incorrectas.
+
+Por eso `RoleService` no “confia” en que el tipo TypeScript llegue siempre bien. Tambien valida en tiempo de ejecucion.
+
+---
+
+### 4. Errores tipados para roles
+
+Archivo:
+
+```text
+src/modules/auth/application/errors/RoleErrors.ts
+```
+
+Se añadieron errores especificos:
+
+```ts
+RoleError
+InvalidRoleError
+UserNotFoundError
+InsufficientRoleError
+RoleAssignmentForbiddenError
+```
+
+La motivacion es la misma que ya vimos con refresh tokens: preparar el camino para que mas adelante los controladores HTTP no dependan de comparar mensajes de texto.
+
+Por ejemplo, en una futura capa HTTP sera mucho mas claro hacer algo como:
+
+```ts
+if (error instanceof RoleAssignmentForbiddenError) {
+  // responder 403
+}
+```
+
+que hacer algo asi:
+
+```ts
+if (error.message.includes('administrator')) {
+  // responder 403
+}
+```
+
+Los errores tipados hacen el sistema mas mantenible y menos fragil.
+
+---
+
+### 5. Exportaciones y cableado
+
+Se actualizaron varios puntos para que el nuevo servicio forme parte de la API interna del modulo:
+
+- `src/modules/auth/application/services/index.ts`
+- `src/modules/auth/application/ports/index.ts`
+- `src/modules/auth/application/errors/index.ts`
+- `src/main.ts`
+
+En `main.ts` se añadio:
+
+```ts
+const _roleService = new RoleService(_userRepository)
+```
+
+Esto mantiene la regla de composicion centralizada: las dependencias concretas se instancian en el composition root, no dentro del propio servicio.
+
+Aunque todavia no haya un caso de uso o controlador terminado consumiendo `RoleService`, dejarlo cableado aqui ayuda a mantener el proyecto coherente tarea a tarea.
+
+---
+
+### 6. Pruebas property-based y pruebas unitarias
+
+Archivo:
+
+```text
+src/modules/auth/application/services/__tests__/RoleService.test.ts
+```
+
+Se añadieron pruebas en memoria con un `InMemoryUserRepository`, siguiendo el mismo estilo usado en otras tareas.
+
+#### Propiedad 3: permisos de creacion de cuentas
+
+Se generan combinaciones de:
+
+- rol solicitante: `ADMIN`, `COACH`, `ATHLETE` o `null` para registro publico;
+- rol objetivo: `ADMIN`, `COACH`, `ATHLETE`.
+
+Y se comprueba que `canCreateRole(...)` cumple exactamente la tabla esperada.
+
+Esto es util porque no prueba solo “casos bonitos”, sino muchas combinaciones automaticamente.
+
+#### Propiedad 20: solo `ADMIN` puede modificar roles
+
+Se verifica que:
+
+- si quien solicita es `COACH` o `ATHLETE`, `assignRole(...)` rechaza la operacion;
+- el rol del usuario destino no cambia por accidente.
+
+Ese segundo punto es importante: no basta con lanzar error, tambien hay que comprobar que no hubo efectos colaterales.
+
+#### Propiedad 19: solo se aceptan roles validos
+
+Se generan strings arbitrarios fuera del conjunto valido y se comprueba que el servicio responde con `InvalidRoleError`.
+
+Esta prueba protege muy bien contra “valores fantasma” que a veces aparecen al integrar formularios, APIs o datos externos.
+
+#### Pruebas adicionales de `validatePermission`
+
+Ademas se cubrieron tres casos directos:
+
+- devuelve `true` si el usuario tiene el rol requerido;
+- rechaza si el rol no coincide;
+- rechaza si el usuario no existe.
+
+Con esto queda cubierta tanto la parte de jerarquia como la parte de autorizacion puntual.
+
+---
+
+### Por que `RoleService` vive en Application y no en Infrastructure
+
+Esto merece una pausa porque es una decision arquitectonica importante.
+
+`RoleService` no habla con HTTP.
+`RoleService` no ejecuta SQL directamente.
+`RoleService` no depende de Express, Redis ni PostgreSQL.
+
+Lo que hace es aplicar reglas del negocio:
+
+- quien puede crear a quien;
+- quien puede cambiar roles;
+- que roles existen realmente;
+- que pasa cuando falta permiso.
+
+Eso significa que pertenece a la capa **Application**.
+
+La infraestructura solo aporta el detalle tecnico necesario para consultar o actualizar usuarios mediante `IUserRepository`.
+
+Dicho de otra forma:
+
+- `PostgresUserRepository` sabe **como** guardar un cambio de rol;
+- `RoleService` sabe **cuando** ese cambio esta permitido.
+
+Separar ambas cosas hace el codigo mas facil de entender, testear y mantener.
+
+---
+
+### Decisiones pequeñas pero importantes
+
+#### 1. Usar `null` para registro publico
+
+En `canCreateRole`, el registro publico se representa con `requesterRole = null`.
+
+Eso es mejor que:
+
+- inventar un cuarto rol que no existe en requerimientos;
+- meter un string especial fuera del enum;
+- duplicar otra funcion distinta solo para registro publico.
+
+Es una forma sencilla de expresar “no hay usuario autenticado”.
+
+#### 2. `validatePermission` exige coincidencia exacta
+
+En esta primera version no se implemento una jerarquia implicita tipo:
+
+```text
+ADMIN hereda permisos de COACH
+COACH hereda permisos de ATHLETE
+```
+
+Se opto por comparacion exacta de rol porque es lo mas fiel al diseño actual y evita asumir una semantica no descrita en requerimientos.
+
+Si mas adelante el proyecto necesita permisos jerarquicos para acceso a recursos, podremos evolucionarlo de forma explicita. Pero por ahora es mejor no inventar reglas.
+
+#### 3. `assignRole` valida tambien la existencia del objetivo
+
+Puede parecer obvio, pero es un buen ejemplo de por que un servicio de aplicacion aporta valor:
+
+- no basta con saber que el solicitante es `ADMIN`;
+- tambien hay que controlar que el usuario destino exista antes de modificarlo.
+
+Esto concentra el flujo completo en un solo sitio.
+
+---
+
+### Como se verifico
+
+Se ejecutaron estas comprobaciones:
+
+```bash
+npm run typecheck
+npm test -- RoleService.test.ts
+```
+
+Resultado:
+
+- `typecheck` correcto;
+- suite de `RoleService` pasando con 7 tests en verde.
+
+---
+
+### Resumen didactico
+
+Con esta tarea el proyecto gana una pieza central de autorizacion basada en roles.
+
+Lo mas importante no es solo que ahora exista un `RoleService`, sino **como** se construyo:
+
+- con reglas concentradas en un unico servicio;
+- con validacion en runtime ademas de tipos;
+- con errores tipados;
+- con pruebas de propiedad para cubrir muchas combinaciones;
+- y respetando la separacion entre negocio (`Application`) y persistencia (`Infrastructure`).
+
+Esto deja el terreno preparado para que las siguientes tareas, como `UserService`, no tengan que inventar por su cuenta las reglas de creacion o cambio de roles. Simplemente podran apoyarse en esta pieza ya definida.

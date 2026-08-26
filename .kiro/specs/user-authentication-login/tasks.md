@@ -129,27 +129,27 @@ Este plan convierte el diseño técnico en pasos de codificación incrementales 
     - Verificar que tokens revocados o expirados (según rol) resultan en HTTP 401, y tokens válidos emiten nuevo access token
     - **Valida: Requerimientos 8.1, 8.2, 8.3, 8.4**
 
-- [ ] 8. Implementar `RoleService`
-  - [ ] 8.1 Implementar `canCreateRole` y `validatePermission`
+- [x] 8. Implementar `RoleService`
+  - [x] 8.1 Implementar `canCreateRole` y `validatePermission`
     - `canCreateRole(requesterRole, targetRole)`: ADMIN puede crear ADMIN y COACH; COACH puede crear ATHLETE; ATHLETE no puede crear ninguno; registro público solo COACH
     - `validatePermission(userId, requiredRole)`: verificar que el usuario tiene el rol requerido
     - _Requerimientos: 1.1, 1.2, 1.7, 2.7, 3.1, 3.7, 9.3, 9.4, 9.5_
 
-  - [ ] 8.2 Implementar `assignRole`
+  - [x] 8.2 Implementar `assignRole`
     - Modificar el rol de un usuario en DB; verificar que el solicitante es ADMIN
     - _Requerimientos: 9.2, 9.3_
 
-  - [ ]* 8.3 Escribir prueba de propiedad para permisos de creación de cuentas
+  - [x]* 8.3 Escribir prueba de propiedad para permisos de creación de cuentas
     - **Propiedad 3: Los permisos de creación de cuenta respetan la jerarquía de roles**
     - Para cualquier combinación de rol solicitante y rol objetivo, verificar la tabla de permisos; intentos fuera de las reglas deben retornar HTTP 403
     - **Valida: Requerimientos 1.1, 1.2, 1.7, 2.7, 3.1, 3.7**
 
-  - [ ]* 8.4 Escribir prueba de propiedad para modificación de roles
+  - [x]* 8.4 Escribir prueba de propiedad para modificación de roles
     - **Propiedad 20: Solo los Administradores pueden modificar roles**
     - Para cualquier usuario con rol COACH o ATHLETE que intente modificar roles, verificar rechazo con HTTP 403
     - **Valida: Requerimientos 9.4, 9.5**
 
-  - [ ]* 8.5 Escribir prueba de propiedad para roles válidos del sistema
+  - [x]* 8.5 Escribir prueba de propiedad para roles válidos del sistema
     - **Propiedad 19: Solo los roles válidos del sistema son aceptados**
     - Para cualquier valor de rol fuera de `{ADMIN, COACH, ATHLETE}`, verificar error de validación
     - **Valida: Requerimiento 9.1**
