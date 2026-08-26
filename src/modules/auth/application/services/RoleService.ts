@@ -17,8 +17,8 @@ export class RoleService implements IRoleService {
       throw new UserNotFoundError(requesterId)
     }
 
-    if (requester.role !== Role.ADMIN) {
-      throw new RoleAssignmentForbiddenError(requester.role)
+    if (!this.canAssignRole(requester.role, newRole)) {
+      throw new RoleAssignmentForbiddenError(requester.role, newRole)
     }
 
     const targetUser = await this.userRepository.findById(targetUserId)
@@ -55,9 +55,16 @@ export class RoleService implements IRoleService {
       return targetRole === Role.COACH
     }
 
+    return this.canAssignRole(requesterRole, targetRole)
+  }
+
+  canAssignRole(requesterRole: Role, targetRole: Role): boolean {
+    this.assertRole(requesterRole)
+    this.assertRole(targetRole)
+
     switch (requesterRole) {
       case Role.ADMIN:
-        return targetRole === Role.ADMIN || targetRole === Role.COACH
+        return true
       case Role.COACH:
         return targetRole === Role.ATHLETE
       case Role.ATHLETE:

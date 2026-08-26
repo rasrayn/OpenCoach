@@ -131,7 +131,7 @@ Este plan convierte el diseño técnico en pasos de codificación incrementales 
 
 - [x] 8. Implementar `RoleService`
   - [x] 8.1 Implementar `canCreateRole` y `validatePermission`
-    - `canCreateRole(requesterRole, targetRole)`: ADMIN puede crear ADMIN y COACH; COACH puede crear ATHLETE; ATHLETE no puede crear ninguno; registro público solo COACH
+    - `canCreateRole(requesterRole, targetRole)`: ADMIN puede crear cualquier rol; COACH puede crear ATHLETE; ATHLETE no puede crear ninguno; registro público solo COACH
     - `validatePermission(userId, requiredRole)`: verificar que el usuario tiene el rol requerido
     - _Requerimientos: 1.1, 1.2, 1.7, 2.7, 3.1, 3.7, 9.3, 9.4, 9.5_
 

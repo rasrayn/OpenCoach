@@ -95,8 +95,7 @@ describe('RoleService.canCreateRole - property tests (Propiedad 3)', () => {
 
           const allowed =
             (requesterRole === null && targetRole === Role.COACH) ||
-            (requesterRole === Role.ADMIN &&
-              (targetRole === Role.ADMIN || targetRole === Role.COACH)) ||
+            requesterRole === Role.ADMIN ||
             (requesterRole === Role.COACH && targetRole === Role.ATHLETE)
 
           expect(service.canCreateRole(requesterRole, targetRole)).toBe(allowed)
@@ -107,13 +106,40 @@ describe('RoleService.canCreateRole - property tests (Propiedad 3)', () => {
   })
 })
 
-describe('RoleService.assignRole - property tests (Propiedad 20)', () => {
-  it('allows only administrators to modify roles', async () => {
+describe('RoleService.canAssignRole - property tests', () => {
+  it('centralizes the authenticated role assignment policy', async () => {
     await fc.assert(
       fc.asyncProperty(
-        fc.constantFrom(Role.COACH, Role.ATHLETE),
+        fc.constantFrom(...validRoles),
+        fc.constantFrom(...validRoles),
+        async (requesterRole, targetRole) => {
+          const { service } = createService()
+          const allowed =
+            requesterRole === Role.ADMIN ||
+            (requesterRole === Role.COACH && targetRole === Role.ATHLETE)
+
+          expect(service.canAssignRole(requesterRole, targetRole)).toBe(allowed)
+        }
+      ),
+      { numRuns: 80 }
+    )
+  })
+})
+
+describe('RoleService.assignRole - property tests', () => {
+  it('rejects role assignments outside the centralized policy', async () => {
+    await fc.assert(
+      fc.asyncProperty(
+        fc.constantFrom(...validRoles),
         fc.constantFrom(...validRoles),
         async (requesterRole, newRole) => {
+          fc.pre(
+            !(
+              requesterRole === Role.ADMIN ||
+              (requesterRole === Role.COACH && newRole === Role.ATHLETE)
+            )
+          )
+
           const requester = createUser({
             id: 'requester',
             email: `${requesterRole.toLowerCase()}@example.com`,
@@ -131,6 +157,7 @@ describe('RoleService.assignRole - property tests (Propiedad 20)', () => {
           )
           await expect(service.assignRole(target.id, newRole, requester.id)).rejects.toMatchObject({
             requesterRole,
+            targetRole: newRole,
           })
           expect(repository.users.get(target.id)?.role).toBe(Role.ATHLETE)
         }
@@ -139,17 +166,34 @@ describe('RoleService.assignRole - property tests (Propiedad 20)', () => {
     )
   })
 
-  it('updates the target role when requested by an administrator', async () => {
+  it('updates the target role when the requester can assign that role', async () => {
     await fc.assert(
-      fc.asyncProperty(fc.constantFrom(...validRoles), async (newRole) => {
-        const admin = createUser({ id: 'admin', email: 'admin@example.com', role: Role.ADMIN })
-        const target = createUser({ id: 'target', email: 'target@example.com', role: Role.ATHLETE })
-        const { service, repository } = createService([admin, target])
+      fc.asyncProperty(
+        fc.constantFrom(...validRoles),
+        fc.constantFrom(...validRoles),
+        async (requesterRole, newRole) => {
+          fc.pre(
+            requesterRole === Role.ADMIN ||
+              (requesterRole === Role.COACH && newRole === Role.ATHLETE)
+          )
 
-        await service.assignRole(target.id, newRole, admin.id)
+          const requester = createUser({
+            id: 'requester',
+            email: `${requesterRole.toLowerCase()}@example.com`,
+            role: requesterRole,
+          })
+          const target = createUser({
+            id: 'target',
+            email: 'target@example.com',
+            role: Role.ATHLETE,
+          })
+          const { service, repository } = createService([requester, target])
 
-        expect(repository.users.get(target.id)?.role).toBe(newRole)
-      }),
+          await service.assignRole(target.id, newRole, requester.id)
+
+          expect(repository.users.get(target.id)?.role).toBe(newRole)
+        }
+      ),
       { numRuns: 40 }
     )
   })
