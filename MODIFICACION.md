@@ -1221,3 +1221,372 @@ Esto evita subir:
 - variables de entorno o secretos locales.
 
 Despues de anadirlo se repitio el build y `dist/` ya no ensucio el estado de Git.
+
+---
+
+## Tarea 6: punto de control de servicios de infraestructura
+
+La tarea 6 no pedia implementar una pieza nueva, sino parar y verificar que lo construido hasta ahora seguia siendo coherente.
+
+Esto es importante porque ya tenemos varias piezas de infraestructura conectadas:
+
+- `AuditService`, que registra eventos de auditoria mediante un repositorio.
+- `RedisRateLimitService`, que protege contra intentos fallidos por cuenta y por IP.
+- Tests de dominio, aplicacion e infraestructura.
+- Protecciones de configuracion para no usar almacenamiento en memoria por accidente en produccion.
+
+En este punto se ejecutaron estas comprobaciones:
+
+```bash
+npm run typecheck
+npm test -- --runInBand
+npm run build
+git diff --check
+```
+
+Resultado:
+
+- TypeScript compila sin errores de tipos.
+- La suite de tests pasa completa: 3 suites y 37 tests.
+- El build de produccion se genera correctamente.
+- No hay errores de espacios detectados por Git.
+
+Tambien se reviso que las clases todavia no implementadas pertenezcan a tareas posteriores, por ejemplo `TokenService`, `PasswordHasher`, `EmailService` y controladores. Esos stubs no bloquean esta tarea porque forman parte del plan incremental.
+
+La idea practica de este checkpoint es sencilla: antes de seguir construyendo encima, confirmamos que la base no se ha torcido. Asi, si en la siguiente tarea aparece un fallo, sera mucho mas facil acotar si viene del cambio nuevo y no de una deuda silenciosa anterior.
+
+---
+
+## Tarea 7: TokenService, JWT RS256 y refresh tokens
+
+En esta tarea se implemento la gestion de tokens en dos niveles para separar responsabilidades:
+
+- `JwtTokenService`, en infraestructura, se encarga solo de firmar y verificar access tokens JWT con RS256.
+- `TokenService`, en aplicacion, coordina la emision de access tokens y la vida de los refresh tokens usando `ITokenRepository`.
+
+### Access tokens JWT
+
+Los access tokens ahora:
+
+- usan algoritmo `RS256`;
+- incluyen `iat`, `exp` y `jti`;
+- expiran a los 15 minutos;
+- rechazan tokens expirados;
+- rechazan tokens con firma manipulada;
+- rechazan tokens con roles fuera del enum real del sistema.
+
+No se ha usado una dependencia externa tipo `jsonwebtoken`; se ha implementado con `crypto` de Node para mantener el proyecto ligero en esta fase y entender bien las piezas: header, payload, firma, base64url y verificacion.
+
+### Seguridad de claves
+
+Las claves privadas y publicas no se suben a GitHub.
+
+El servicio lee las rutas desde configuracion:
+
+```text
+JWT_PRIVATE_KEY_PATH=./keys/private.pem
+JWT_PUBLIC_KEY_PATH=./keys/public.pem
+```
+
+Y se actualizo `.gitignore` para ignorar:
+
+```text
+keys/
+*.pem
+```
+
+Tambien se creo `.env.example`, pero solo con placeholders y rutas de ejemplo. El archivo real `.env` sigue ignorado.
+
+La idea importante es esta:
+
+- `.env.example` se puede commitear porque ensena que variables existen.
+- `.env` no se commitea porque contiene valores reales.
+- `keys/private.pem` no se commitea porque es material criptografico privado.
+
+### Refresh tokens
+
+Los refresh tokens se implementaron como tokens opacos: el cliente recibe un valor aleatorio, pero en base de datos solo se guarda su SHA-256.
+
+Eso significa que si alguien leyera accidentalmente la tabla `refresh_tokens`, no tendria directamente los tokens utilizables por los clientes.
+
+La duracion depende del rol:
+
+- `ADMIN`: 1 dia.
+- `COACH`: 7 dias.
+- `ATHLETE`: sin expiracion temporal, solo revocacion.
+
+Esta regla viene del requerimiento 8.
+
+### Rotacion
+
+Cuando se consume un refresh token valido:
+
+1. Se calcula su hash.
+2. Se busca en el repositorio.
+3. Se rechaza si no existe, esta revocado o esta expirado.
+4. Se revoca el token actual.
+5. Se emite un nuevo refresh token para el mismo usuario/dispositivo.
+
+Esto reduce el riesgo de reutilizacion: un refresh token usado deja de ser el valor valido para esa sesion.
+
+### Tests anadidos
+
+Se anadieron tests unitarios y de propiedad, siguiendo la piramide de test:
+
+- JWT con expiracion exacta de 15 minutos y `jti` unico.
+- Rechazo de JWT expirado.
+- Rechazo de JWT manipulado.
+- Rechazo de JWT mal formado.
+- Rechazo de JWT firmado pero con rol invalido.
+- Duracion de refresh token segun rol.
+- Comprobacion de que el token opaco no se guarda en claro.
+- Rotacion de refresh token valido.
+- Rechazo de refresh tokens revocados, expirados o desconocidos.
+
+No se han creado tests E2E en esta fase porque aun no esta implementado el controlador HTTP completo. La equivalencia HTTP 401 de algunos rechazos se comprobara cuando se implemente el caso de uso/controlador de refresco.
+
+### Resultado de verificacion
+
+Se ejecuto:
+
+```bash
+npm run typecheck
+npm test -- --runInBand
+npm run build
+```
+
+Resultado:
+
+- TypeScript sin errores.
+- 5 suites de test pasando.
+- 47 tests pasando.
+- Build correcto.
+
+---
+
+## Correccion sobre refresh tokens: rol actual, historial y consumo atomico
+
+Tras revisar la implementacion de la tarea 7 aparecieron tres puntos importantes de seguridad.
+
+### 1. No confiar en el rol guardado en el refresh token para decisiones actuales
+
+El refresh token guardaba tambien el `role` del usuario. Eso puede ser util como dato historico, pero no debe ser la fuente principal para emitir nuevos permisos.
+
+Ejemplo peligroso:
+
+1. Un usuario era `ADMIN` cuando se emitio el refresh token.
+2. Dias despues se le baja a `COACH`.
+3. Usa el refresh token antiguo.
+4. Si el sistema confiara en `refreshToken.role`, podria seguir tratandolo como `ADMIN`.
+
+Para evitarlo, `TokenService.verifyAndConsumeRefreshToken()` ahora consulta el usuario actual mediante `IUserRepository.findById()` antes de rotar el token.
+
+La rotacion usa:
+
+```ts
+currentUser.role
+```
+
+y no:
+
+```ts
+record.role
+```
+
+Ademas, el resultado de `verifyAndConsumeRefreshToken()` devuelve `currentUser`, para que los futuros casos de uso no tengan que reutilizar datos historicos del token cuando emitan un nuevo access token.
+
+### 2. Evitar reutilizar la misma fila al rotar
+
+Antes, `PostgresTokenRepository.saveRefreshToken()` usaba:
+
+```sql
+ON CONFLICT (user_id, device_id) DO UPDATE
+```
+
+Eso hacia que una rotacion sobrescribiera la fila anterior.
+
+El problema es que una carrera de concurrencia podia interactuar mal con esa misma fila:
+
+1. Peticion A y peticion B leen el mismo refresh token valido.
+2. A lo consume.
+3. A rota y actualiza la misma fila con el nuevo token.
+4. B intenta consumir la misma fila, pero ahora podria estar viendo una fila activa otra vez.
+
+Para evitarlo, ahora cada refresh token emitido queda como una fila historica nueva. La fila antigua se marca como revocada y la nueva se inserta aparte.
+
+Esto permite detectar que un token antiguo reaparece como token ya revocado.
+
+### 3. Consumo atomico del refresh token
+
+El repositorio incorpora ahora:
+
+```ts
+consumeRefreshToken(tokenId, tokenHash): Promise<boolean>
+```
+
+En PostgreSQL se implementa con un `UPDATE` condicional:
+
+```sql
+UPDATE refresh_tokens
+SET revoked_at = NOW()
+WHERE id = $1
+  AND token_hash = $2
+  AND revoked_at IS NULL
+  AND (expires_at IS NULL OR expires_at > NOW())
+```
+
+La idea es que solo una peticion puede pasar de:
+
+```text
+revoked_at IS NULL
+```
+
+a:
+
+```text
+revoked_at = NOW()
+```
+
+Si dos peticiones intentan consumir el mismo token a la vez, una gana y la otra recibe `false`. Entonces `TokenService` rechaza la segunda con:
+
+```text
+Refresh token already consumed
+```
+
+y no emite otro refresh token.
+
+### 4. Un solo refresh token activo por dispositivo
+
+La migracion ahora permite historial de tokens, pero mantiene la regla de un token activo por dispositivo mediante un indice parcial:
+
+```sql
+CREATE UNIQUE INDEX idx_refresh_tokens_one_active_device
+  ON refresh_tokens(user_id, device_id)
+  WHERE revoked_at IS NULL;
+```
+
+Esto significa:
+
+- puede haber muchos tokens historicos para el mismo dispositivo;
+- solo uno puede estar activo a la vez.
+
+### 5. Sobre `deviceInfo?: DeviceInfo | null`
+
+Se simplifico la API publica a:
+
+```ts
+ deviceInfo?: DeviceInfo
+```
+
+Dentro del servicio, si no llega valor, se guarda como `null` en la entidad/DB.
+
+Asi evitamos exponer tres estados distintos (`undefined`, `null`, objeto) cuando realmente no estamos diferenciando semanticamente entre `undefined` y `null` a nivel de llamada.
+
+### 6. Reuse detection avanzada
+
+Todavia no se implemento una familia de tokens con `tokenFamilyId`, `parentTokenId` o `reusedAt`.
+
+Eso seria una mejora avanzada para detectar robo de refresh tokens y revocar toda la familia si reaparece un token antiguo.
+
+Lo que si queda cubierto ahora es la parte critica inmediata:
+
+- un mismo refresh token no puede consumirse dos veces;
+- los tokens antiguos no se sobrescriben;
+- un replay no genera nuevos tokens;
+- la rotacion usa el rol actual del usuario.
+
+### Tests nuevos de esta correccion
+
+Se anadieron pruebas para comprobar que:
+
+- la rotacion crea una fila nueva y revoca la historica;
+- un refresh token consumido no puede reutilizarse;
+- si el consumo atomico pierde la carrera, no se emite un token nuevo;
+- la rotacion usa el rol actual del usuario, no el rol historico guardado en el refresh token;
+- si el usuario ya no existe, el refresh token se rechaza.
+
+---
+
+## Correccion final de rotacion: operacion atomica completa
+
+Despues de la correccion anterior quedaba una mejora importante: aunque el consumo del token viejo era atomico, la rotacion completa seguia ocurriendo en dos pasos desde `TokenService`:
+
+```text
+1. consumir token viejo
+2. insertar token nuevo
+```
+
+Eso evitaba que dos peticiones ganasen a la vez, pero dejaba una inconsistencia posible:
+
+```text
+A se consume correctamente
+B falla al insertarse
+```
+
+Resultado: el usuario podia quedarse sin refresh token valido.
+
+Para corregirlo, el contrato del repositorio cambio de:
+
+```ts
+consumeRefreshToken(...)
+```
+
+a:
+
+```ts
+rotateRefreshToken(...)
+```
+
+La diferencia conceptual es importante:
+
+- `consumeRefreshToken` solo representaba media operacion.
+- `rotateRefreshToken` representa la operacion completa: consumir viejo + crear nuevo.
+
+En PostgreSQL se implemento con una sola sentencia usando CTE:
+
+```sql
+WITH consumed AS (
+  UPDATE refresh_tokens
+  SET revoked_at = NOW()
+  WHERE id = $1
+    AND token_hash = $2
+    AND revoked_at IS NULL
+    AND (expires_at IS NULL OR expires_at > NOW())
+  RETURNING ...
+), rotated AS (
+  INSERT INTO refresh_tokens (...)
+  SELECT ...
+  FROM consumed
+  RETURNING ...
+)
+SELECT ...
+FROM consumed
+CROSS JOIN rotated
+```
+
+Esto tiene una propiedad muy buena: si `consumed` no actualiza ninguna fila, `rotated` no inserta nada. Y al ser una sola sentencia SQL, PostgreSQL la ejecuta de forma atomica.
+
+Asi cubrimos las dos garantias:
+
+1. Solo una peticion puede consumir el refresh token viejo.
+2. No existe un estado intermedio donde el token viejo queda consumido pero el nuevo no se crea.
+
+Tambien se introdujeron errores tipados:
+
+```ts
+RefreshTokenNotFoundError
+RefreshTokenRevokedError
+RefreshTokenExpiredError
+RefreshTokenAlreadyConsumedError
+RefreshTokenUserNotFoundError
+```
+
+Esto prepara mejor los futuros controladores HTTP. En vez de depender de comparar strings, podran hacer:
+
+```ts
+if (error instanceof RefreshTokenExpiredError) {
+  // responder 401 con mensaje adecuado
+}
+```
+
+Los tests se actualizaron para verificar tanto la rotacion atomica del repositorio como las clases de error lanzadas por `TokenService`.

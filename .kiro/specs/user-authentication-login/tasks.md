@@ -104,27 +104,27 @@ Este plan convierte el diseño técnico en pasos de codificación incrementales 
     - Verificar que exactamente 20 intentos fallidos desde la misma IP activan el bloqueo de 30 minutos con HTTP 429
     - **Valida: Requerimiento 12.4**
 
-- [ ] 6. Punto de control — verificar servicios de infraestructura
+- [x] 6. Punto de control — verificar servicios de infraestructura
   - Asegurarse de que todas las pruebas pasen hasta este punto; consultar al usuario si surgen dudas.
 
-- [ ] 7. Implementar `TokenService`
-  - [ ] 7.1 Implementar emisión y verificación de access tokens JWT (RS256)
+- [x] 7. Implementar `TokenService`
+  - [x] 7.1 Implementar emisión y verificación de access tokens JWT (RS256)
     - `issueAccessToken(payload)`: emitir JWT con expiración de 15 minutos y claim `jti` único
     - `verifyAccessToken(token)`: verificar firma y expiración, retornar payload
     - _Requerimientos: 4.1, 4.2, 4.3_
 
-  - [ ] 7.2 Implementar emisión y rotación de refresh tokens
+  - [x] 7.2 Implementar emisión y rotación de refresh tokens
     - `issueRefreshToken(userId, deviceId, role)`: generar token opaco, almacenar su SHA-256 en DB con `expires_at` según rol (NULL para ATHLETE, 7 días para COACH, 1 día para ADMIN)
     - `verifyAndConsumeRefreshToken(token)`: buscar hash en DB, validar estado y expiración, marcar como revocado (rotación)
     - `revokeRefreshToken(tokenId)` y `revokeAllUserRefreshTokens(userId)`
     - _Requerimientos: 4.1, 4.2, 4.3, 8.1, 8.2, 8.3, 8.4, 8.5, 8.6, 8.7_
 
-  - [ ]* 7.3 Escribir prueba de propiedad para duración de refresh tokens por rol
+  - [x]* 7.3 Escribir prueba de propiedad para duración de refresh tokens por rol
     - **Propiedad 5: La duración del refresh token es coherente con el rol del usuario**
     - Para cualquier login exitoso, verificar `expires_at` según rol: NULL para ATHLETE, ≈7 días para COACH, ≈1 día para ADMIN; access token siempre 15 min
     - **Valida: Requerimientos 4.1, 4.2, 4.3**
 
-  - [ ]* 7.4 Escribir prueba de propiedad para refresco de token
+  - [x]* 7.4 Escribir prueba de propiedad para refresco de token
     - **Propiedad 16: El refresco de token respeta el estado y expiración del refresh token**
     - Verificar que tokens revocados o expirados (según rol) resultan en HTTP 401, y tokens válidos emiten nuevo access token
     - **Valida: Requerimientos 8.1, 8.2, 8.3, 8.4**
