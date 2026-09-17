@@ -154,35 +154,35 @@ Este plan convierte el diseño técnico en pasos de codificación incrementales 
     - Para cualquier valor de rol fuera de `{ADMIN, COACH, ATHLETE}`, verificar error de validación
     - **Valida: Requerimiento 9.1**
 
-- [ ] 9. Implementar `UserService`
-  - [ ] 9.1 Implementar `registerCoach`
+- [x] 9. Implementar `UserService`
+  - [x] 9.1 Implementar `registerCoach`
     - Validar email único, validar contraseña, hashear con bcrypt (factor 12), insertar en `users` (role=COACH), insertar en `coach_profiles` con campos opcionales
     - _Requerimientos: 2.1, 2.2, 2.3, 2.4, 2.5, 12.3_
 
-  - [ ]* 9.2 Escribir prueba de propiedad para perfil de entrenador
+  - [x]* 9.2 Escribir prueba de propiedad para perfil de entrenador
     - **Propiedad 9: El perfil de entrenador acepta cualquier combinación de campos opcionales**
     - Generar combinaciones arbitrarias de `gymName` y `program` (presentes/ausentes) y verificar que el registro siempre se completa exitosamente
     - **Valida: Requerimiento 2.3**
 
-  - [ ] 9.3 Implementar `createUserByAdmin`
+  - [x] 9.3 Implementar `createUserByAdmin`
     - Validar que el solicitante es ADMIN, validar email único, validar contraseña, hashear con bcrypt (factor 12), insertar usuario con rol indicado (ADMIN o COACH), activar cuenta de inmediato
     - _Requerimientos: 1.1, 1.2, 1.3, 1.4, 1.6, 1.7_
 
-  - [ ] 9.4 Implementar `createAthleteByCoach`
+  - [x] 9.4 Implementar `createAthleteByCoach`
     - Validar que el solicitante es COACH, validar email único, validar contraseña, hashear con bcrypt (factor 12), insertar usuario con role=ATHLETE e `isFirstAccess=true`, activar cuenta de inmediato
     - _Requerimientos: 3.1, 3.2, 3.3, 3.4, 3.7_
 
-  - [ ]* 9.5 Escribir prueba de propiedad para creación de cuenta y rol asignado
+  - [x]* 9.5 Escribir prueba de propiedad para creación de cuenta y rol asignado
     - **Propiedad 2: La creación de cuenta asigna exactamente el rol solicitado**
     - Para cualquier combinación válida de datos de creación, verificar que la cuenta creada tiene exactamente el rol indicado y está activa
     - **Valida: Requerimientos 1.6, 2.5**
 
-  - [ ]* 9.6 Escribir prueba de propiedad para indicador de Primer_Acceso en Atleta
+  - [x]* 9.6 Escribir prueba de propiedad para indicador de Primer_Acceso en Atleta
     - **Propiedad 4: La cuenta de Atleta creada por Entrenador tiene Primer_Acceso activado**
     - Para cualquier Atleta creado por un Entrenador, verificar `isFirstAccess=true` y `role=ATHLETE`
     - **Valida: Requerimiento 3.4**
 
-  - [ ]* 9.7 Escribir prueba de propiedad para almacenamiento de contraseñas
+  - [x]* 9.7 Escribir prueba de propiedad para almacenamiento de contraseñas
     - **Propiedad 22: Las contraseñas se almacenan exclusivamente como hash bcrypt con factor ≥ 12**
     - Para cualquier contraseña creada o actualizada, verificar que `password_hash` es un hash bcrypt válido con cost factor ≥ 12 y nunca texto plano
     - **Valida: Requerimiento 12.3**

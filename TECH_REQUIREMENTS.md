@@ -143,7 +143,7 @@ Production Redis requirements:
 
 | Area | Requirement | Source | Notes |
 |---|---|---|---|
-| Password hashing | bcrypt with cost factor `>= 12` | requirements/design | Implementation dependency is still pending. |
+| Password hashing | bcrypt with cost factor `>= 12` | requirements/design | Implemented by `bcryptjs` with an explicit cost factor of 12. |
 | Access tokens | JWT signed with `RS256` | design/tasks | Current implementation uses Node `crypto`, no external JWT package. |
 | Access token duration | 15 minutes | requirements/design | Implemented in `TokenService`. |
 | Refresh token storage | Opaque token stored as SHA-256 hash | implementation/design | Plain refresh tokens must never be stored. |
@@ -221,7 +221,7 @@ These technologies are required by the architecture but do not yet have pinned v
 | Redis | Choose production major version. |
 | PostgreSQL npm client | Choose package and version, likely when real DB wiring starts. |
 | Redis npm client | Choose package and version, likely when production rate limiting is wired. |
-| bcrypt implementation package | Choose package and version during UserService/password hashing implementation. |
+| bcrypt implementation package | `bcryptjs` `^2.4.3` | Added for Task 9; exact version is pinned in `package-lock.json`. |
 | SMTP/email package | Choose package and version when email sending is implemented for real. |
 | Node.js runtime policy | Decide whether to target Node 20, 22, or 24 and enforce it with `engines` / `.nvmrc`. |
 

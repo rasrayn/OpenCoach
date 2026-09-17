@@ -1,15 +1,19 @@
 import { IPasswordHasher } from '../../domain/services/IPasswordHasher'
+import bcrypt from 'bcryptjs'
 
 /**
  * BcryptPasswordHasher — bcrypt implementation of IPasswordHasher.
- * Full implementation added in Task 9 (uses bcrypt with cost factor ≥ 12).
+ * Uses bcrypt with a deliberately explicit cost factor so password storage
+ * cannot silently fall below the security requirement.
  */
 export class BcryptPasswordHasher implements IPasswordHasher {
-  async hash(_plainPassword: string): Promise<string> {
-    throw new Error('Not implemented yet — see Task 9')
+  static readonly COST_FACTOR = 12
+
+  async hash(plainPassword: string): Promise<string> {
+    return bcrypt.hash(plainPassword, BcryptPasswordHasher.COST_FACTOR)
   }
 
-  async compare(_plainPassword: string, _hash: string): Promise<boolean> {
-    throw new Error('Not implemented yet — see Task 9')
+  async compare(plainPassword: string, hash: string): Promise<boolean> {
+    return bcrypt.compare(plainPassword, hash)
   }
 }
