@@ -15,4 +15,7 @@ export {
 export {
   UserError,
   UserNotFoundError,
+  UserEmailAlreadyExistsError,
+  UserCreationForbiddenError,
+  InvalidUserCreationRoleError,
 } from './UserErrors'
