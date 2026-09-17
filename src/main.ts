@@ -23,6 +23,9 @@ import { JwtTokenService } from './modules/auth/infrastructure/security/JwtToken
 import { AuditService } from './modules/auth/application/services/AuditService'
 import { RoleService } from './modules/auth/application/services/RoleService'
 import { TokenService } from './modules/auth/application/services/TokenService'
+import { EmailService } from './modules/auth/application/services/EmailService'
+import { UserService } from './modules/auth/application/services/UserService'
+import { PostgresCoachProfileRepository } from './modules/auth/infrastructure/persistence/PostgresCoachProfileRepository'
 
 async function bootstrap(): Promise<void> {
   const config = loadConfig()
@@ -51,8 +54,11 @@ async function bootstrap(): Promise<void> {
           throw new Error('Production RateLimitService requires a shared atomic Redis store')
         })()
       : RedisRateLimitService.inMemoryForLocalDevelopment()
-  const _emailService = new NodemailerEmailService()
+  const emailDelivery = new NodemailerEmailService(config.email, config.nodeEnv)
+  const _emailService = new EmailService(_userRepository, _tokenRepository, emailDelivery)
   const _passwordHasher = new BcryptPasswordHasher()
+  const _userService = new UserService(_userRepository, _passwordHasher, _roleService,
+    _auditService, new PostgresCoachProfileRepository(dbPool), _emailService)
   const _tokenSigner = new JwtTokenService()
   const _tokenService = new TokenService(_tokenSigner, _tokenRepository, _userRepository)
 

@@ -39,6 +39,8 @@ export interface EmailConfig {
   user: string
   password: string
   fromAddress: string
+  verificationBaseUrl: string
+  passwordResetBaseUrl: string
 }
 
 export interface CorsConfig {
@@ -72,6 +74,8 @@ export function loadConfig(): AppConfig {
       user: process.env['EMAIL_USER'] ?? '',
       password: process.env['EMAIL_PASSWORD'] ?? '',
       fromAddress: process.env['EMAIL_FROM'] ?? 'noreply@example.com',
+      verificationBaseUrl: process.env['EMAIL_VERIFICATION_BASE_URL'] ?? 'http://localhost:3000/auth/email/verify',
+      passwordResetBaseUrl: process.env['EMAIL_PASSWORD_RESET_BASE_URL'] ?? 'http://localhost:3001/password/reset',
     },
     cors: {
       allowedOrigins: (process.env['CORS_ORIGINS'] ?? 'http://localhost:3001').split(','),

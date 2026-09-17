@@ -19,3 +19,4 @@ export {
   UserCreationForbiddenError,
   InvalidUserCreationRoleError,
 } from './UserErrors'
+export { EmailDeliveryError, EmailDeliveryTimeoutError } from './EmailErrors'

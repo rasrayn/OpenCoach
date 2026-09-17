@@ -14,6 +14,7 @@ import {
 } from '../errors'
 import { IRoleService } from '../ports/IRoleService'
 import { User } from '../../domain/entities/User'
+import { IAccountEmailService } from '../ports/IAccountEmailService'
 
 export class UserService {
   constructor(
@@ -22,6 +23,7 @@ export class UserService {
     private readonly roleService: IRoleService,
     private readonly auditService: IAuditService,
     private readonly coachProfileRepository: ICoachProfileRepository,
+    private readonly emailService: IAccountEmailService,
   ) {}
 
   async registerCoach(data: CoachRegistrationData): Promise<User> {
@@ -41,11 +43,13 @@ export class UserService {
     try {
       await this.coachProfileRepository.save({ userId: user.id, gymName: data.gymName, program: data.program })
       await this.auditCreated(user, 'PUBLIC_REGISTRATION')
-      return user
     } catch (error) {
       await this.userRepository.delete(user.id)
       throw error
     }
+    // Delivery happens after persistence: an SMTP failure must not delete an account.
+    await this.emailService.sendVerificationEmail(user.id)
+    return user
   }
 
   async createUserByAdmin(data: AdminCreateUserData, adminId: string): Promise<User> {
@@ -59,9 +63,11 @@ export class UserService {
     const passwordHash = await this.hashPassword(data.password)
     await this.ensureEmailAvailable(email)
     const user = await this.userRepository.save({
-      email, passwordHash, role: requestedRole as Role, emailVerified: true, isFirstAccess: false, createdBy: adminId,
+      email, passwordHash, role: requestedRole as Role, emailVerified: false, isFirstAccess: false, createdBy: adminId,
     })
-    return this.completeCreation(user, 'ADMIN_CREATION')
+    await this.completeCreation(user, 'ADMIN_CREATION')
+    await this.sendCreationEmails(user, data.password)
+    return user
   }
 
   async createAthleteByCoach(data: CoachCreateAthleteData, coachId: string): Promise<User> {
@@ -73,9 +79,11 @@ export class UserService {
     const passwordHash = await this.hashPassword(data.password)
     await this.ensureEmailAvailable(email)
     const user = await this.userRepository.save({
-      email, passwordHash, role: Role.ATHLETE, emailVerified: true, isFirstAccess: true, createdBy: coachId,
+      email, passwordHash, role: Role.ATHLETE, emailVerified: false, isFirstAccess: true, createdBy: coachId,
     })
-    return this.completeCreation(user, 'COACH_CREATION')
+    await this.completeCreation(user, 'COACH_CREATION')
+    await this.sendCreationEmails(user, data.password)
+    return user
   }
 
   async getUserById(userId: string): Promise<User> {
@@ -88,6 +96,17 @@ export class UserService {
 
   private validateEmail(value: string): string {
     return Email.create(value).value
+  }
+
+  private async sendCreationEmails(user: User, password: string): Promise<void> {
+    // Both sends start immediately, and both settle before reporting failure.
+    const results = await Promise.allSettled([
+      this.emailService.sendCredentialsEmail(user.id, password),
+      this.emailService.sendVerificationEmail(user.id),
+    ])
+    for (const result of results) {
+      if (result.status === 'rejected') throw result.reason
+    }
   }
 
   private async hashPassword(value: string): Promise<string> {

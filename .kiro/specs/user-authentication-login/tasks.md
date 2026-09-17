@@ -187,16 +187,16 @@ Este plan convierte el diseño técnico en pasos de codificación incrementales 
     - Para cualquier contraseña creada o actualizada, verificar que `password_hash` es un hash bcrypt válido con cost factor ≥ 12 y nunca texto plano
     - **Valida: Requerimiento 12.3**
 
-- [ ] 10. Implementar `EmailService`
-  - [ ] 10.1 Implementar `sendVerificationEmail`
+- [x] 10. Implementar `EmailService`
+  - [x] 10.1 Implementar `sendVerificationEmail`
     - Generar token de verificación opaco, almacenar su SHA-256 en `email_verification_tokens` con TTL de 24 horas, enviar email con enlace de verificación
     - _Requerimientos: 2.6, 3.5, 3.6, 5.2, 5.3_
 
-  - [ ] 10.2 Implementar `sendCredentialsEmail`
+  - [x] 10.2 Implementar `sendCredentialsEmail`
     - Enviar email con credenciales al usuario recién creado dentro de 60 segundos
     - _Requerimientos: 1.5, 3.5_
 
-  - [ ] 10.3 Implementar `sendPasswordResetEmail`
+  - [x] 10.3 Implementar `sendPasswordResetEmail`
     - Generar token de recuperación opaco, almacenar su SHA-256 en `password_reset_tokens` con TTL de 1 hora, enviar email con enlace de recuperación
     - _Requerimientos: 10.1_
 

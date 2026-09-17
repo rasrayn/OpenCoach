@@ -53,9 +53,12 @@ Optionally add `.nvmrc` or another runtime-version file once the deployment targ
 
 ### Runtime Dependencies
 
-There are currently no installed runtime dependencies in `package.json`.
+| Package | Exact Version | Purpose |
+|---|---:|---|
+| `bcryptjs` | `2.4.3` | Password hashing with cost 12. |
+| `nodemailer` | `10.0.10` | SMTP transactional email; includes TypeScript types. |
 
-Some infrastructure classes are intentionally lightweight or stubbed while the implementation plan advances. Production adapters for PostgreSQL, Redis, email, and bcrypt may require runtime dependencies in later tasks.
+PostgreSQL and Redis clients remain pending.
 
 ### Development Dependencies
 
@@ -170,7 +173,17 @@ These are paths only. The actual key files must stay out of git.
 | Technology | Version / Requirement | Source | Notes |
 |---|---:|---|---|
 | Email provider / SMTP server | `TBD` | design docs | Required for verification, credentials, and password reset flows. |
-| Email npm client | `TBD` | implementation pending | `NodemailerEmailService` exists as an adapter name, but no package is installed yet. |
+| Email npm client | `nodemailer` `10.0.10` | package-lock.json | Implemented SMTP adapter; TypeScript types included. |
+
+`EmailService` in the application layer resolves the stored recipient and issues 32-byte cryptographically random tokens. Only SHA-256 hashes are persisted, with 24-hour verification and 1-hour reset expiration. `IEmailService` remains the rendering/delivery port; `IAccountEmailService` is the account-level orchestration port used by `UserService`.
+
+SMTP requires TLS 1.2+ with certificate validation: implicit TLS on port 465, otherwise mandatory STARTTLS. Only loopback SMTP outside production permits plaintext for a local mail sink. Message content and SMTP debug logging are disabled. Link prefixes require HTTPS in production; HTTP loopback is allowed in development.
+
+Each delivery starts immediately and has a 60-second application deadline. Provider acceptance is checked; timeout/rejection raises a sanitized error. Inbox delivery within 60 seconds cannot be guaranteed by this adapter. A timeout can be ambiguous at the provider, so there are no automatic retries. Failed token deliveries attempt to invalidate the issued token; database failure during cleanup must be handled operationally.
+
+Account creation calls verification delivery for all roles and credential delivery for administrator/coach-created accounts. Accounts start with `emailVerified=false`; this indicates pending email verification, not a separate account activation status. SMTP failures preserve persisted accounts and propagate an error. HTTP handling, verification/resend/reset endpoints, and recovery UX remain Tasks 11 and 14; retries of account creation are not idempotent.
+
+The password-reset URL targets the future frontend form, which submits the token and new password to the reset endpoint. It is not a GET request to the password-changing endpoint.
 
 Expected environment variables are documented in `.env.example`.
 
@@ -200,6 +213,8 @@ EMAIL_PORT
 EMAIL_USER
 EMAIL_PASSWORD
 EMAIL_FROM
+EMAIL_VERIFICATION_BASE_URL
+EMAIL_PASSWORD_RESET_BASE_URL
 CORS_ORIGINS
 ```
 
@@ -221,8 +236,6 @@ These technologies are required by the architecture but do not yet have pinned v
 | Redis | Choose production major version. |
 | PostgreSQL npm client | Choose package and version, likely when real DB wiring starts. |
 | Redis npm client | Choose package and version, likely when production rate limiting is wired. |
-| bcrypt implementation package | `bcryptjs` `^2.4.3` | Added for Task 9; exact version is pinned in `package-lock.json`. |
-| SMTP/email package | Choose package and version when email sending is implemented for real. |
 | Node.js runtime policy | Decide whether to target Node 20, 22, or 24 and enforce it with `engines` / `.nvmrc`. |
 
 Until these are decided, the project should avoid pretending they are fixed.
